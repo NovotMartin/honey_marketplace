@@ -9,6 +9,7 @@ Jednoduchá česká one-page aplikace pro rezervace sklenic medu.
 - Node.js + Express
 - Prisma + SQLite
 - QR platby přes `qrcode`
+- E-mail notifikace přes SMTP (`nodemailer`)
 
 ## Lokální spuštění
 
@@ -64,13 +65,37 @@ Admin panel je dostupný na `/admin`. Heslo se čte z `ADMIN_PASSWORD` v `.env`.
 Admin umí:
 
 - nastavit celkový počet sklenic, cenu, IBAN, SWIFT/BIC, Revolut username/link a zprávu k platbě,
-- filtrovat, řadit, upravit, potvrdit nebo zrušit objednávky,
-- vytvořit osobní/offline objednávku,
+- zobrazit stav SMTP/e-mail konfigurace a poslat testovací e-mail,
+- filtrovat, řadit, upravit, potvrdit nebo zrušit objednávky na `/objednavky`,
+- vytvořit osobní/offline objednávku na `/objednavky`,
 - resetovat heslo zákazníkovi.
 
 ## Platby
 
 Bankovní QR se generuje z IBAN/SWIFT jako český SPD payload v CZK. Revolut QR se generuje z uloženého `revolut.me` odkazu s parametry `amount` a `currency=CZK`, pokud je odkaz nastavený.
+
+## E-mail notifikace
+
+Webové objednávky z `/chcimed` a `/mujmed` pošlou adminovi e-mail. Offline objednávky vytvořené adminem e-mail neposílají.
+
+E-mail obsahuje tlačítko pro potvrzení objednávky. Odkaz je podepsaný přes `ADMIN_ACTION_SECRET`, časově omezený a nepotřebuje admin heslo. Potvrzení z e-mailu provede stejnou akci jako tlačítko `Potvrdit` v tabulce objednávek.
+
+Purelymail příklad:
+
+```env
+SMTP_HOST=smtp.purelymail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=tvuj@email.cz
+SMTP_PASSWORD=heslo-nebo-app-password
+SMTP_FROM=tvuj@email.cz
+ADMIN_EMAIL=admin@email.cz
+APP_PUBLIC_URL=https://med.example.cz
+ADMIN_ACTION_SECRET=dlouhy-nahodny-token
+ADMIN_CONFIRM_LINK_TTL_HOURS=72
+```
+
+V administraci na `/admin` se zobrazuje stav e-mailového nastavení a formulář pro odeslání testovacího e-mailu. SMTP heslo a `ADMIN_ACTION_SECRET` se v UI nezobrazují, pouze jestli jsou nastavené.
 
 ## Docker
 
@@ -109,6 +134,16 @@ environment:
   HONEY_REVOLUT_USERNAME: ${HONEY_REVOLUT_USERNAME:-}
   HONEY_REVOLUT_LINK: ${HONEY_REVOLUT_LINK:-}
   HONEY_PAYMENT_MESSAGE: ${HONEY_PAYMENT_MESSAGE:-}
+  SMTP_HOST: ${SMTP_HOST:-smtp.purelymail.com}
+  SMTP_PORT: ${SMTP_PORT:-465}
+  SMTP_SECURE: ${SMTP_SECURE:-true}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+  APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
+  ADMIN_ACTION_SECRET: ${ADMIN_ACTION_SECRET:-}
+  ADMIN_CONFIRM_LINK_TTL_HOURS: ${ADMIN_CONFIRM_LINK_TTL_HOURS:-72}
 ```
 
 Prázdné `HONEY_*` hodnoty nepřepisují nastavení uložené přes admin UI. Pokud některou `HONEY_*` hodnotu vyplníš, při každém startu kontejneru se propíše do admin nastavení.

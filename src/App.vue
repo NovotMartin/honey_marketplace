@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Notivue, Notification, push } from "notivue";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import DataTable, { type DataTableColumn } from "./components/DataTable.vue";
 import {
@@ -7,6 +8,7 @@ import {
   adminCreateOrder,
   adminLogin,
   adminResetPassword,
+  adminSendTestEmail,
   adminUpdateOrder,
   cancelProfileOrder,
   createProfileOrder,
@@ -28,6 +30,7 @@ import { useSessionStore } from "./stores/session";
 
 type SettingsForm = Omit<AdminSettings, "id" | "updatedAt">;
 type AdminOrderEdit = { name: string; jarCount: number; status: Order["status"]; source: Order["source"] };
+type RecentPayment = { order: Pick<Order, "id" | "jarCount" | "customerName">; payment: Payment; kind: "created" | "selected" };
 
 const routeLabels = {
   "/": "Domů",
@@ -50,10 +53,9 @@ const publicState = ref<PublicState | null>(null);
 const profile = ref<ProfileResponse | null>(null);
 const admin = ref<AdminDashboard | null>(null);
 const loading = ref(false);
-const error = ref("");
-const notice = ref("");
 const profilePasswordInput = ref<HTMLInputElement | null>(null);
-const lastPayment = ref<{ order: Pick<Order, "id" | "jarCount" | "customerName">; payment: Payment } | null>(null);
+const lastPayment = ref<RecentPayment | null>(null);
+const reservationComplete = ref(false);
 
 const reservation = reactive({
   name: "",
@@ -69,6 +71,9 @@ const profileLogin = reactive({
 const profileAddCount = ref(1);
 const editingOrders = reactive<Record<string, number>>({});
 const adminPassword = ref("");
+const testEmailTo = ref("");
+const testEmailResult = ref("");
+const testEmailError = ref("");
 const passwordResets = reactive<Record<string, string>>({});
 const adminEditingOrders = reactive<Record<string, AdminOrderEdit>>({});
 const adminEditingOrderIds = reactive<Record<string, boolean>>({});
@@ -173,13 +178,11 @@ function handlePopstate() {
 
 async function run(action: () => Promise<void>) {
   loading.value = true;
-  error.value = "";
-  notice.value = "";
 
   try {
     await action();
   } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : "Akce se nepovedla.";
+    push.error(caught instanceof Error ? caught.message : "Akce se nepovedla.");
   } finally {
     loading.value = false;
   }
@@ -237,17 +240,25 @@ async function refreshAdmin() {
 }
 
 async function submitReservation() {
+  if (reservationComplete.value) {
+    push.info("Rezervace už je vytvořená. Pro další objednávku použij tlačítko Chci další.");
+    navigateTo("/mujmed");
+    return;
+  }
+
   await run(async () => {
     const response = await createReservation({ ...reservation });
     publicState.value = response.publicState;
-    lastPayment.value = { order: response.order, payment: response.payment };
+    lastPayment.value = { order: response.order, payment: response.payment, kind: "created" };
+    reservationComplete.value = true;
     profileLogin.name = reservation.name;
     profileLogin.password = reservation.password;
     session.rememberCustomer(reservation.name);
     profile.value = await loginProfile({ name: reservation.name, password: reservation.password });
     syncProfileEditing();
     reservation.jarCount = 1;
-    notice.value = "Rezervace je uložená. QR platba je připravená níže.";
+    push.success("Rezervace je uložená. QR platba je připravená v Můj med.");
+    navigateTo("/mujmed");
   });
 }
 
@@ -256,7 +267,7 @@ async function submitProfileLogin() {
     profile.value = await loginProfile({ ...profileLogin });
     session.rememberCustomer(profile.value.customer.name);
     syncProfileEditing();
-    notice.value = "Profil je odemčený.";
+    push.success("Profil je odemčený.");
   });
 }
 
@@ -265,10 +276,10 @@ async function addProfileOrder() {
     const response = await createProfileOrder({ ...profileLogin, jarCount: profileAddCount.value });
     profile.value = response.profile;
     publicState.value = response.publicState;
-    lastPayment.value = { order: response.order, payment: response.payment };
+    lastPayment.value = { order: response.order, payment: response.payment, kind: "created" };
     syncProfileEditing();
     profileAddCount.value = 1;
-    notice.value = "Další rezervace je přidaná.";
+    push.success("Další rezervace je přidaná.");
   });
 }
 
@@ -277,9 +288,9 @@ async function updateOwnOrder(order: ProfileOrder) {
     const response = await updateProfileOrder(order.id, { ...profileLogin, jarCount: editingOrders[order.id] ?? order.jarCount });
     profile.value = response.profile;
     publicState.value = response.publicState;
-    lastPayment.value = { order: response.order, payment: response.payment };
+    lastPayment.value = { order: response.order, payment: response.payment, kind: "selected" };
     syncProfileEditing();
-    notice.value = "Rezervace je upravená.";
+    push.success("Rezervace je upravená.");
   });
 }
 
@@ -290,7 +301,7 @@ async function cancelOwnOrder(order: ProfileOrder) {
     publicState.value = response.publicState;
     lastPayment.value = null;
     syncProfileEditing();
-    notice.value = "Rezervace je zrušená.";
+    push.success("Rezervace je zrušená.");
   });
 }
 
@@ -298,7 +309,7 @@ async function submitAdminLogin() {
   await run(async () => {
     await adminLogin(adminPassword.value);
     await refreshAdmin();
-    notice.value = "Admin je odemčený.";
+    push.success("Admin je odemčený.");
   });
 }
 
@@ -307,7 +318,7 @@ async function submitSettings() {
     const response = await saveAdminSettings(adminPassword.value, { ...settingsForm });
     publicState.value = response.publicState;
     await refreshAdmin();
-    notice.value = "Nastavení je uložené.";
+    push.success("Nastavení je uložené.");
   });
 }
 
@@ -324,8 +335,31 @@ async function submitAdminOrder() {
     adminOrder.name = "";
     adminOrder.jarCount = 1;
     adminOrder.password = "";
-    notice.value = "Osobní objednávka je zapsaná.";
+    push.success("Osobní objednávka je zapsaná.");
   });
+}
+
+async function submitTestEmail() {
+  loading.value = true;
+  testEmailResult.value = "";
+  testEmailError.value = "";
+
+  try {
+    const response = await adminSendTestEmail(adminPassword.value, testEmailTo.value);
+
+    if (admin.value) {
+      admin.value.mailSettings = response.mailSettings;
+    }
+
+    testEmailResult.value = response.message;
+    push.success(response.message);
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "Testovací e-mail se nepodařilo odeslat.";
+    testEmailError.value = message;
+    push.error(message);
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function confirmAdminOrder(order: Order) {
@@ -333,7 +367,7 @@ async function confirmAdminOrder(order: Order) {
     const response = await adminConfirmOrder(adminPassword.value, order.id);
     publicState.value = response.publicState;
     await refreshAdmin();
-    notice.value = "Objednávka je potvrzená.";
+    push.success("Objednávka je potvrzená.");
   });
 }
 
@@ -342,7 +376,7 @@ async function cancelAdminOrder(order: Order) {
     const response = await adminCancelOrder(adminPassword.value, order.id);
     publicState.value = response.publicState;
     await refreshAdmin();
-    notice.value = "Objednávka je zrušená.";
+    push.success("Objednávka je zrušená.");
   });
 }
 
@@ -358,7 +392,7 @@ async function updateAdminOrder(order: Order) {
     publicState.value = response.publicState;
     adminEditingOrderIds[order.id] = false;
     await refreshAdmin();
-    notice.value = "Objednávka je upravená.";
+    push.success("Objednávka je upravená.");
   });
 }
 
@@ -376,7 +410,7 @@ async function resetCustomerPassword(customerId: string) {
   await run(async () => {
     await adminResetPassword(adminPassword.value, customerId, passwordResets[customerId]);
     passwordResets[customerId] = "";
-    notice.value = "Heslo je změněné.";
+    push.success("Heslo je změněné.");
   });
 }
 
@@ -390,9 +424,23 @@ async function selectCustomer(name: string) {
 
 function showPayment(order: ProfileOrder) {
   if (order.payment) {
-    lastPayment.value = { order, payment: order.payment };
-    document.getElementById("platba")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    lastPayment.value = { order, payment: order.payment, kind: "selected" };
+    nextTick(() => document.getElementById("platba")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
+}
+
+function startAnotherReservation() {
+  lastPayment.value = null;
+  reservationComplete.value = false;
+  reservation.jarCount = 1;
+  reservation.name = profileLogin.name || reservation.name;
+  reservation.password = profileLogin.password || reservation.password;
+  navigateTo("/chcimed");
+}
+
+function clearPayment() {
+  lastPayment.value = null;
+  reservationComplete.value = false;
 }
 
 function maxForOrder(order: ProfileOrder) {
@@ -441,6 +489,10 @@ function editableOrderAmount(order: Order) {
   return (adminEditingOrders[order.id]?.jarCount ?? order.jarCount) * (admin.value?.settings.pricePerJarCzk ?? 0);
 }
 
+function valueOrUnset(value: string) {
+  return value || "nenastaveno";
+}
+
 onMounted(async () => {
   window.addEventListener("popstate", handlePopstate);
   profileLogin.name = session.lastCustomerName;
@@ -454,6 +506,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <Notivue v-slot="item">
+    <Notification :item="item" />
+  </Notivue>
+
   <main class="relative min-h-screen overflow-hidden bg-honey-50 text-stone-900">
     <div class="honeycomb-bg" aria-hidden="true"></div>
     <div class="bee bee-one" aria-hidden="true">🐝</div>
@@ -481,11 +537,6 @@ onBeforeUnmount(() => {
         </div>
       </nav>
     </header>
-
-    <section class="relative z-10 mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
-      <div v-if="error" class="alert alert-error">{{ error }}</div>
-      <div v-if="notice" class="alert alert-success">{{ notice }}</div>
-    </section>
 
     <template v-if="currentRoute === '/'">
       <section class="relative z-10 mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
@@ -617,34 +668,10 @@ onBeforeUnmount(() => {
           K zaplacení: <strong>{{ money((publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount) }}</strong>
         </div>
 
-        <button class="btn-primary mt-5 w-full" type="submit" :disabled="loading || !canReserve">Rezervovat a zobrazit QR</button>
+        <button class="btn-primary mt-5 w-full" type="submit" :disabled="loading || reservationComplete || !canReserve">
+          {{ loading ? "Ukládám..." : reservationComplete ? "Rezervace vytvořená" : "Rezervovat a zobrazit QR" }}
+        </button>
       </form>
-    </section>
-
-    <section id="platba" v-if="lastPayment" class="relative z-10 mx-auto max-w-7xl px-4 pb-8 sm:px-6 lg:px-8">
-      <div class="panel">
-        <p class="section-kicker">Platba</p>
-        <h2 class="section-title">{{ lastPayment.order.jarCount }} sklenic pro {{ lastPayment.order.customerName }}</h2>
-        <p class="mt-2 text-stone-600">Částka: <strong>{{ money(lastPayment.payment.amountCzk) }}</strong>. Zpráva: {{ lastPayment.payment.message }}</p>
-
-        <div class="mt-6 grid gap-4 md:grid-cols-2">
-          <div v-if="lastPayment.payment.bankQr" class="qr-card">
-            <h3>Bankovní QR</h3>
-            <img :src="lastPayment.payment.bankQr" alt="Bankovní QR platba" />
-            <p class="text-sm font-black text-stone-700">Částka k úhradě: {{ money(lastPayment.payment.amountCzk) }}</p>
-          </div>
-          <div v-if="lastPayment.payment.revolutQr" class="qr-card">
-            <h3>Revolut QR</h3>
-            <img :src="lastPayment.payment.revolutQr" alt="Revolut QR platba" />
-            <a class="text-sm font-bold text-honey-700 underline" :href="lastPayment.payment.revolutLink ?? undefined" target="_blank" rel="noreferrer">
-              Otevřít Revolut odkaz
-            </a>
-          </div>
-          <div v-if="!lastPayment.payment.bankQr && !lastPayment.payment.revolutQr" class="rounded-2xl bg-stone-100 p-5 text-stone-600">
-            Admin ještě nenastavil IBAN ani Revolut odkaz, QR platba zatím není k dispozici.
-          </div>
-        </div>
-      </div>
     </section>
 
     <section v-if="currentRoute === '/mujmed'" class="relative z-10 mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
@@ -658,6 +685,35 @@ onBeforeUnmount(() => {
           <button class="btn-secondary" type="submit" :disabled="loading">Odemknout</button>
         </form>
         <p v-if="session.lastCustomerName" class="mt-2 text-sm text-stone-500">Poslední použitý profil: {{ session.lastCustomerName }}</p>
+
+        <div id="platba" v-if="lastPayment" class="mt-6 rounded-[2rem] border-4 border-honey-200 bg-honey-50 p-5 shadow-sm">
+          <p class="section-kicker">{{ lastPayment.kind === 'created' ? 'Rezervace vytvořena' : 'Platba' }}</p>
+          <h2 class="section-title">{{ lastPayment.order.jarCount }} sklenic pro {{ lastPayment.order.customerName }}</h2>
+          <p class="mt-2 text-stone-600">Částka: <strong>{{ money(lastPayment.payment.amountCzk) }}</strong>. Zpráva: {{ lastPayment.payment.message }}</p>
+
+          <div class="mt-6 grid gap-4 md:grid-cols-2">
+            <div v-if="lastPayment.payment.bankQr" class="qr-card">
+              <h3>Bankovní QR</h3>
+              <img :src="lastPayment.payment.bankQr" alt="Bankovní QR platba" />
+              <p class="text-sm font-black text-stone-700">Částka k úhradě: {{ money(lastPayment.payment.amountCzk) }}</p>
+            </div>
+            <div v-if="lastPayment.payment.revolutQr" class="qr-card">
+              <h3>Revolut QR</h3>
+              <img :src="lastPayment.payment.revolutQr" alt="Revolut QR platba" />
+              <a class="text-sm font-bold text-honey-700 underline" :href="lastPayment.payment.revolutLink ?? undefined" target="_blank" rel="noreferrer">
+                Otevřít Revolut odkaz
+              </a>
+            </div>
+            <div v-if="!lastPayment.payment.bankQr && !lastPayment.payment.revolutQr" class="rounded-2xl bg-stone-100 p-5 text-stone-600">
+              Admin ještě nenastavil IBAN ani Revolut odkaz, QR platba zatím není k dispozici.
+            </div>
+          </div>
+
+          <div class="mt-5 flex flex-col gap-3 sm:flex-row">
+            <button class="btn-primary" type="button" @click="startAnotherReservation">Chci další</button>
+            <button class="btn-secondary" type="button" @click="clearPayment">Skrýt platbu</button>
+          </div>
+        </div>
 
         <div v-if="profile" class="mt-6 space-y-4">
           <div class="rounded-3xl bg-honey-100 p-4">
@@ -721,18 +777,40 @@ onBeforeUnmount(() => {
               <button class="btn-save mt-4" type="submit">Uložit nastavení</button>
             </form>
 
-            <form class="admin-card" @submit.prevent="submitAdminOrder">
-              <h3 class="admin-title">Osobní / offline objednávka</h3>
-              <div class="grid gap-3 sm:grid-cols-2">
-                <input v-model="adminOrder.name" class="input text-stone-900" placeholder="Jméno" required />
-                <input v-model.number="adminOrder.jarCount" class="input text-stone-900" type="number" min="1" required />
-                <input v-model="adminOrder.password" class="input text-stone-900 sm:col-span-2" placeholder="Volitelné heslo pro nový profil" />
-                <label class="flex items-center gap-2 text-sm font-bold text-stone-200 sm:col-span-2">
-                  <input v-model="adminOrder.confirmed" type="checkbox" /> Rovnou potvrdit
-                </label>
+            <div class="admin-card">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 class="admin-title">E-mail notifikace</h3>
+                  <p class="text-sm text-stone-300">SMTP hodnoty se nastavují v Docker Compose nebo `.env`. Heslo a podpisový token se nezobrazují.</p>
+                </div>
+                <span class="rounded-full px-3 py-1 text-xs font-black" :class="admin.mailSettings.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'">
+                  {{ admin.mailSettings.enabled ? 'Zapnuto' : 'Nedokončeno' }}
+                </span>
               </div>
-              <button class="btn-save mt-4" type="submit">Zapsat objednávku</button>
-            </form>
+
+              <div class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <div class="rounded-2xl bg-white/10 p-3"><strong>SMTP server</strong><br />{{ valueOrUnset(admin.mailSettings.host) }}:{{ admin.mailSettings.port }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>Secure</strong><br />{{ admin.mailSettings.secure ? 'SSL/TLS' : 'STARTTLS / ne' }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>SMTP uživatel</strong><br />{{ valueOrUnset(admin.mailSettings.user) }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>Odesílatel</strong><br />{{ valueOrUnset(admin.mailSettings.from) }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>Admin e-mail</strong><br />{{ valueOrUnset(admin.mailSettings.adminEmail) }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>Veřejná URL</strong><br />{{ valueOrUnset(admin.mailSettings.appPublicUrl) }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>SMTP heslo</strong><br />{{ admin.mailSettings.hasPassword ? 'nastaveno' : 'nenastaveno' }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>Token odkazu</strong><br />{{ admin.mailSettings.hasActionSecret ? 'nastaveno' : 'nenastaveno' }}</div>
+                <div class="rounded-2xl bg-white/10 p-3"><strong>Platnost odkazu</strong><br />{{ admin.mailSettings.confirmLinkTtlHours }} h</div>
+              </div>
+
+              <div v-if="admin.mailSettings.missing.length" class="mt-4 rounded-2xl bg-amber-100 p-3 text-sm font-bold text-amber-900">
+                Chybí: {{ admin.mailSettings.missing.join(', ') }}
+              </div>
+
+              <form class="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]" @submit.prevent="submitTestEmail">
+                <input v-model="testEmailTo" class="input text-stone-900" type="email" placeholder="Kam poslat testovací e-mail" required />
+                <button class="btn-save" type="submit" :disabled="loading">Odeslat test</button>
+              </form>
+              <div v-if="testEmailResult" class="mt-3 rounded-2xl bg-emerald-100 p-3 text-sm font-bold text-emerald-900">{{ testEmailResult }}</div>
+              <div v-if="testEmailError" class="mt-3 rounded-2xl bg-red-100 p-3 text-sm font-bold text-red-900">{{ testEmailError }}</div>
+            </div>
 
             <div class="admin-card">
               <h3 class="admin-title">Reset hesel</h3>
@@ -758,6 +836,20 @@ onBeforeUnmount(() => {
           </div>
           <span class="rounded-full bg-white/10 px-4 py-2 text-sm font-black">Volné: {{ admin.totals.availableJars }}</span>
         </div>
+
+        <form class="admin-card mt-6" @submit.prevent="submitAdminOrder">
+          <h3 class="admin-title">Osobní / offline objednávka</h3>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <input v-model="adminOrder.name" class="input text-stone-900" placeholder="Jméno" required />
+            <input v-model.number="adminOrder.jarCount" class="input text-stone-900" type="number" min="1" required />
+            <input v-model="adminOrder.password" class="input text-stone-900 sm:col-span-2" placeholder="Volitelné heslo pro nový profil" />
+            <label class="flex items-center gap-2 text-sm font-bold text-stone-200 sm:col-span-2">
+              <input v-model="adminOrder.confirmed" type="checkbox" /> Rovnou potvrdit
+            </label>
+          </div>
+          <button class="btn-save mt-4" type="submit">Zapsat objednávku</button>
+        </form>
+
         <DataTable
           class="mt-6"
           :rows="adminOrders"

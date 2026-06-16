@@ -21,6 +21,8 @@
     "dotenv": "latest",
     "express": "latest",
     "helmet": "latest",
+    "nodemailer": "latest",
+    "notivue": "latest",
     "pinia": "latest",
     "prisma": "6.19.3",
     "qrcode": "latest",

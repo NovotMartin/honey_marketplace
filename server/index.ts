@@ -17,6 +17,12 @@ const app = express();
 const settingsId = 1;
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
+type OrderWithCustomer = Prisma.OrderGetPayload<{ include: { customer: true } }>;
+type MailTransport = { sendMail(options: { from: string; to: string; subject: string; text: string; html: string }): Promise<unknown> };
+type NodemailerModule = {
+  createTransport?: (options: Record<string, unknown>) => MailTransport;
+  default?: { createTransport?: (options: Record<string, unknown>) => MailTransport };
+};
 
 class HttpError extends Error {
   constructor(
@@ -74,6 +80,10 @@ const resetPasswordSchema = z.object({
   password: passwordInput
 });
 
+const testEmailSchema = z.object({
+  to: z.string().trim().email("Zadej platnou e-mailovou adresu.").max(254)
+});
+
 type SettingsEnvOverrides = Partial<
   Pick<
     Prisma.SettingsUncheckedCreateInput,
@@ -100,6 +110,84 @@ function optionalIntEnv(name: string) {
   }
 
   return parsed.data;
+}
+
+function optionalBooleanEnv(name: string) {
+  const value = optionalEnv(name);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (["1", "true", "yes", "ano"].includes(value.toLowerCase())) {
+    return true;
+  }
+
+  if (["0", "false", "no", "ne"].includes(value.toLowerCase())) {
+    return false;
+  }
+
+  throw new Error(`${name} musí být true/false.`);
+}
+
+function mailSettingsFromEnv() {
+  const port = optionalIntEnv("SMTP_PORT") ?? 465;
+  const secure = optionalBooleanEnv("SMTP_SECURE") ?? port === 465;
+  const host = optionalEnv("SMTP_HOST") ?? "";
+  const user = optionalEnv("SMTP_USER") ?? "";
+  const password = optionalEnv("SMTP_PASSWORD") ?? "";
+  const from = optionalEnv("SMTP_FROM") ?? user;
+  const adminEmail = optionalEnv("ADMIN_EMAIL") ?? "";
+  const appPublicUrl = (optionalEnv("APP_PUBLIC_URL") ?? "").replace(/\/+$/, "");
+  const actionSecret = optionalEnv("ADMIN_ACTION_SECRET") ?? "";
+  const confirmLinkTtlHours = optionalIntEnv("ADMIN_CONFIRM_LINK_TTL_HOURS") ?? 72;
+  const missing = [
+    ["SMTP_HOST", host],
+    ["SMTP_USER", user],
+    ["SMTP_PASSWORD", password],
+    ["SMTP_FROM", from],
+    ["ADMIN_EMAIL", adminEmail],
+    ["APP_PUBLIC_URL", appPublicUrl],
+    ["ADMIN_ACTION_SECRET", actionSecret]
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  return {
+    enabled: missing.length === 0,
+    missing,
+    host,
+    port,
+    secure,
+    user,
+    password,
+    from,
+    adminEmail,
+    appPublicUrl,
+    actionSecret,
+    confirmLinkTtlHours,
+    hasPassword: Boolean(password),
+    hasActionSecret: Boolean(actionSecret)
+  };
+}
+
+function publicMailSettings() {
+  const settings = mailSettingsFromEnv();
+
+  return {
+    enabled: settings.enabled,
+    missing: settings.missing,
+    host: settings.host,
+    port: settings.port,
+    secure: settings.secure,
+    user: settings.user,
+    from: settings.from,
+    adminEmail: settings.adminEmail,
+    appPublicUrl: settings.appPublicUrl,
+    confirmLinkTtlHours: settings.confirmLinkTtlHours,
+    hasPassword: settings.hasPassword,
+    hasActionSecret: settings.hasActionSecret
+  };
 }
 
 function settingsOverridesFromEnv(): SettingsEnvOverrides {
@@ -256,7 +344,7 @@ function publicSettings(settings: Awaited<ReturnType<typeof ensureSettings>>) {
   };
 }
 
-function serializeOrder(order: Prisma.OrderGetPayload<{ include: { customer: true } }>) {
+function serializeOrder(order: OrderWithCustomer) {
   return {
     id: order.id,
     customerId: order.customerId,
@@ -268,6 +356,70 @@ function serializeOrder(order: Prisma.OrderGetPayload<{ include: { customer: tru
     updatedAt: order.updatedAt,
     cancelledAt: order.cancelledAt
   };
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatMoneyText(value: number) {
+  return new Intl.NumberFormat("cs-CZ", { style: "currency", currency: "CZK", maximumFractionDigits: 0 }).format(value);
+}
+
+function formatDateText(value: Date) {
+  return new Intl.DateTimeFormat("cs-CZ", { dateStyle: "medium", timeStyle: "short" }).format(value);
+}
+
+function adminActionToken(orderId: string, expires: number, secret: string) {
+  return crypto.createHmac("sha256", secret).update(`${orderId}.${expires}`).digest("hex");
+}
+
+function verifyAdminActionToken(orderId: string, expires: number, token: string, secret: string) {
+  const expected = adminActionToken(orderId, expires, secret);
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const tokenBuffer = Buffer.from(token, "hex");
+
+  return expectedBuffer.length === tokenBuffer.length && crypto.timingSafeEqual(expectedBuffer, tokenBuffer);
+}
+
+function adminConfirmUrl(orderId: string) {
+  const settings = mailSettingsFromEnv();
+
+  if (!settings.enabled) {
+    return "";
+  }
+
+  const expires = Math.floor(Date.now() / 1000) + settings.confirmLinkTtlHours * 60 * 60;
+  const token = adminActionToken(orderId, expires, settings.actionSecret);
+  return `${settings.appPublicUrl}/api/admin/orders/${encodeURIComponent(orderId)}/email-confirm?expires=${expires}&token=${token}`;
+}
+
+function adminActionHtmlPage(title: string, message: string) {
+  return `<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8c657; color: #1c1917; font-family: Arial, sans-serif; }
+      main { max-width: 42rem; margin: 1rem; padding: 2rem; border-radius: 2rem; background: rgba(255, 255, 255, 0.88); box-shadow: 0 1.5rem 4rem rgba(120, 53, 15, 0.25); }
+      h1 { margin: 0 0 1rem; font-size: 2rem; }
+      p { margin: 0; font-size: 1.1rem; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+  </body>
+</html>`;
 }
 
 function safePaymentText(value: string, max = 60) {
@@ -350,6 +502,132 @@ async function paymentForOrder(
   }
 
   return result;
+}
+
+async function sendMail(options: { to: string; subject: string; text: string; html: string }) {
+  const settings = mailSettingsFromEnv();
+
+  if (!settings.enabled) {
+    throw new HttpError(400, `E-mail není kompletně nastavený. Chybí: ${settings.missing.join(", ")}.`);
+  }
+
+  const nodemailerModuleName = "nodemailer";
+  const nodemailer = (await import(nodemailerModuleName)) as NodemailerModule;
+  const createTransport = nodemailer.createTransport ?? nodemailer.default?.createTransport;
+
+  if (!createTransport) {
+    throw new HttpError(500, "Balíček nodemailer není dostupný.");
+  }
+
+  const transporter = createTransport({
+    host: settings.host,
+    port: settings.port,
+    secure: settings.secure,
+    auth: {
+      user: settings.user,
+      pass: settings.password
+    }
+  });
+
+  await transporter.sendMail({
+    from: settings.from,
+    to: options.to,
+    subject: options.subject,
+    text: options.text,
+    html: options.html
+  });
+}
+
+async function sendOrderNotificationEmail(order: OrderWithCustomer, settings: Awaited<ReturnType<typeof ensureSettings>>) {
+  const mailSettings = mailSettingsFromEnv();
+
+  if (!mailSettings.enabled) {
+    console.warn(`E-mail notifikace není nastavená. Chybí: ${mailSettings.missing.join(", ")}.`);
+    return;
+  }
+
+  const amount = order.jarCount * settings.pricePerJarCzk;
+  const confirmUrl = adminConfirmUrl(order.id);
+  const subject = `Nová objednávka medu: ${order.customer.name} (${order.jarCount} ks)`;
+  const text = [
+    `Nová webová objednávka medu`,
+    `Jméno: ${order.customer.name}`,
+    `Počet sklenic: ${order.jarCount}`,
+    `Částka: ${formatMoneyText(amount)}`,
+    `Vytvořeno: ${formatDateText(order.createdAt)}`,
+    `Potvrdit objednávku: ${confirmUrl}`
+  ].join("\n");
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
+      <h1 style="margin: 0 0 16px;">Nová objednávka medu</h1>
+      <p><strong>Jméno:</strong> ${escapeHtml(order.customer.name)}</p>
+      <p><strong>Počet sklenic:</strong> ${order.jarCount}</p>
+      <p><strong>Částka:</strong> ${escapeHtml(formatMoneyText(amount))}</p>
+      <p><strong>Vytvořeno:</strong> ${escapeHtml(formatDateText(order.createdAt))}</p>
+      <p style="margin: 24px 0;">
+        <a href="${escapeHtml(confirmUrl)}" style="display: inline-block; border-radius: 999px; background: #059669; color: #ffffff; font-weight: 800; padding: 14px 22px; text-decoration: none;">Potvrdit objednávku</a>
+      </p>
+      <p style="color: #57534e; font-size: 13px;">Odkaz je časově omezený a neobsahuje admin heslo.</p>
+    </div>`;
+
+  try {
+    await sendMail({ to: mailSettings.adminEmail, subject, text, html });
+  } catch (error) {
+    console.error("Nepodařilo se odeslat e-mailovou notifikaci objednávky.", error);
+  }
+}
+
+async function sendOrderCancellationEmail(
+  order: OrderWithCustomer,
+  settings: Awaited<ReturnType<typeof ensureSettings>>,
+  cancelledBy: "uživatel" | "správce"
+) {
+  const mailSettings = mailSettingsFromEnv();
+
+  if (!mailSettings.enabled) {
+    console.warn(`E-mail notifikace není nastavená. Chybí: ${mailSettings.missing.join(", ")}.`);
+    return;
+  }
+
+  const amount = order.jarCount * settings.pricePerJarCzk;
+  const subject = `Zrušená rezervace medu: ${order.customer.name} (${order.jarCount} ks)`;
+  const text = [
+    `Zrušená rezervace medu`,
+    `Jméno: ${order.customer.name}`,
+    `Počet sklenic: ${order.jarCount}`,
+    `Částka: ${formatMoneyText(amount)}`,
+    `Vytvořeno: ${formatDateText(order.createdAt)}`,
+    `Zrušeno: ${formatDateText(order.cancelledAt ?? new Date())}`,
+    `Zrušil: ${cancelledBy}`
+  ].join("\n");
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
+      <h1 style="margin: 0 0 16px;">Zrušená rezervace medu</h1>
+      <p><strong>Jméno:</strong> ${escapeHtml(order.customer.name)}</p>
+      <p><strong>Počet sklenic:</strong> ${order.jarCount}</p>
+      <p><strong>Částka:</strong> ${escapeHtml(formatMoneyText(amount))}</p>
+      <p><strong>Vytvořeno:</strong> ${escapeHtml(formatDateText(order.createdAt))}</p>
+      <p><strong>Zrušeno:</strong> ${escapeHtml(formatDateText(order.cancelledAt ?? new Date()))}</p>
+      <p><strong>Zrušil:</strong> ${escapeHtml(cancelledBy)}</p>
+    </div>`;
+
+  try {
+    await sendMail({ to: mailSettings.adminEmail, subject, text, html });
+  } catch (error) {
+    console.error("Nepodařilo se odeslat e-mailovou notifikaci zrušení objednávky.", error);
+  }
+}
+
+async function sendTestEmail(to: string) {
+  const subject = "Test e-mailu z aplikace Domácí med";
+  const text = "Testovací e-mail byl úspěšně odeslán z aplikace Domácí med.";
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
+      <h1>Test e-mailu</h1>
+      <p>Testovací e-mail byl úspěšně odeslán z aplikace <strong>Domácí med</strong>.</p>
+    </div>`;
+
+  await sendMail({ to, subject, text, html });
 }
 
 async function publicState() {
@@ -459,6 +737,8 @@ app.post(
       return { customer, order, settings };
     });
 
+    await sendOrderNotificationEmail(result.order, result.settings);
+
     res.status(201).json({
       order: serializeOrder(result.order),
       payment: await paymentForOrder(result.settings, result.order, result.customer.name),
@@ -495,6 +775,8 @@ app.post(
 
       return { customer, order, settings };
     });
+
+    await sendOrderNotificationEmail(result.order, result.settings);
 
     res.status(201).json({
       order: serializeOrder(result.order),
@@ -558,10 +840,12 @@ app.delete(
       throw new HttpError(409, "Potvrzenou rezervaci už může zrušit jen správce.");
     }
 
-    await prisma.order.update({
+    const updated = await prisma.order.update({
       where: { id: order.id },
-      data: { status: "CANCELLED", cancelledAt: new Date() }
+      data: { status: "CANCELLED", cancelledAt: new Date() },
+      include: { customer: true }
     });
+    await sendOrderCancellationEmail(updated, await ensureSettings(prisma), "uživatel");
 
     res.json({
       profile: await customerProfile(input.name, input.password),
@@ -591,6 +875,7 @@ app.get(
 
     res.json({
       settings,
+      mailSettings: publicMailSettings(),
       orders: orders.map(serializeOrder),
       customers: await prisma.customer.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, createdAt: true } }),
       totals: {
@@ -613,6 +898,27 @@ app.patch(
     });
 
     res.json({ settings, publicState: await publicState() });
+  })
+);
+
+app.post(
+  "/api/admin/email/test",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const input = testEmailSchema.parse(req.body);
+
+    try {
+      await sendTestEmail(input.to);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+
+      console.error("Testovací e-mail se nepodařilo odeslat.", error);
+      throw new HttpError(502, `Testovací e-mail se nepodařilo odeslat: ${error instanceof Error ? error.message : "neznámá chyba"}.`);
+    }
+
+    res.json({ ok: true, message: `Testovací e-mail byl odeslán na ${input.to}.`, mailSettings: publicMailSettings() });
   })
 );
 
@@ -648,7 +954,7 @@ app.patch(
     const input = adminOrderUpdateSchema.parse(req.body);
     const { orderId } = z.object({ orderId: z.string().min(1) }).parse(req.params);
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const order = await tx.order.findUnique({ where: { id: orderId }, include: { customer: true } });
 
       if (!order) {
@@ -660,7 +966,7 @@ app.patch(
       }
 
       const customer = await getOrCreateCustomerForAdmin(tx, input.name);
-      return tx.order.update({
+      const updated = await tx.order.update({
         where: { id: order.id },
         data: {
           customerId: customer.id,
@@ -671,9 +977,70 @@ app.patch(
         },
         include: { customer: true }
       });
+
+      return { updated, shouldSendCancellationEmail: order.status !== "CANCELLED" && updated.status === "CANCELLED" };
     });
 
-    res.json({ order: serializeOrder(updated), publicState: await publicState() });
+    if (result.shouldSendCancellationEmail) {
+      await sendOrderCancellationEmail(result.updated, await ensureSettings(prisma), "správce");
+    }
+
+    res.json({ order: serializeOrder(result.updated), publicState: await publicState() });
+  })
+);
+
+app.get(
+  "/api/admin/orders/:orderId/email-confirm",
+  asyncRoute(async (req, res) => {
+    const { orderId } = z.object({ orderId: z.string().min(1) }).parse(req.params);
+    const query = z
+      .object({
+        expires: z.coerce.number().int(),
+        token: z.string().trim().min(1).max(200)
+      })
+      .safeParse(req.query);
+
+    if (!query.success) {
+      res.status(400).send(adminActionHtmlPage("Neplatný odkaz", "Odkaz pro potvrzení objednávky nemá správný formát."));
+      return;
+    }
+
+    const mailSettings = mailSettingsFromEnv();
+
+    if (!mailSettings.actionSecret) {
+      res.status(400).send(adminActionHtmlPage("Chybí token", "Na serveru není nastavený ADMIN_ACTION_SECRET."));
+      return;
+    }
+
+    if (query.data.expires < Math.floor(Date.now() / 1000)) {
+      res.status(400).send(adminActionHtmlPage("Odkaz vypršel", "Odkaz pro potvrzení objednávky už není platný."));
+      return;
+    }
+
+    if (!verifyAdminActionToken(orderId, query.data.expires, query.data.token, mailSettings.actionSecret)) {
+      res.status(400).send(adminActionHtmlPage("Neplatný odkaz", "Podpis odkazu pro potvrzení objednávky nesedí."));
+      return;
+    }
+
+    const order = await prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
+
+    if (!order) {
+      res.status(404).send(adminActionHtmlPage("Objednávka nenalezena", "Objednávka už neexistuje."));
+      return;
+    }
+
+    if (order.status === "CANCELLED") {
+      res.status(409).send(adminActionHtmlPage("Objednávka je zrušená", "Zrušenou objednávku nejde potvrdit z e-mailu."));
+      return;
+    }
+
+    const updated = await prisma.order.update({ where: { id: order.id }, data: { status: "CONFIRMED", cancelledAt: null }, include: { customer: true } });
+    res.send(
+      adminActionHtmlPage(
+        "Objednávka potvrzena",
+        `Objednávka pro ${updated.customer.name} na ${updated.jarCount} sklenic je potvrzená.`
+      )
+    );
   })
 );
 
@@ -704,11 +1071,17 @@ app.patch(
       throw new HttpError(404, "Rezervace nebyla nalezena.");
     }
 
+    const shouldSendCancellationEmail = order.status !== "CANCELLED";
     const updated = await prisma.order.update({
       where: { id: order.id },
       data: { status: "CANCELLED", cancelledAt: new Date() },
       include: { customer: true }
     });
+
+    if (shouldSendCancellationEmail) {
+      await sendOrderCancellationEmail(updated, await ensureSettings(prisma), "správce");
+    }
+
     res.json({ order: serializeOrder(updated), publicState: await publicState() });
   })
 );

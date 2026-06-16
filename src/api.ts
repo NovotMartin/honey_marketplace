@@ -66,8 +66,24 @@ export type AdminSettings = {
   updatedAt: string;
 };
 
+export type MailSettings = {
+  enabled: boolean;
+  missing: string[];
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  from: string;
+  adminEmail: string;
+  appPublicUrl: string;
+  confirmLinkTtlHours: number;
+  hasPassword: boolean;
+  hasActionSecret: boolean;
+};
+
 export type AdminDashboard = {
   settings: AdminSettings;
+  mailSettings: MailSettings;
   orders: Order[];
   customers: Array<{ id: string; name: string; createdAt: string }>;
   totals: { activeJars: number; availableJars: number };
@@ -150,6 +166,14 @@ export function saveAdminSettings(password: string, payload: Omit<AdminSettings,
     method: "PATCH",
     headers: { "x-admin-password": password },
     body: JSON.stringify(payload)
+  });
+}
+
+export function adminSendTestEmail(password: string, to: string) {
+  return request<{ ok: true; message: string; mailSettings: MailSettings }>("/api/admin/email/test", {
+    method: "POST",
+    headers: { "x-admin-password": password },
+    body: JSON.stringify({ to })
   });
 }
 
