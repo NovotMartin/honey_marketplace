@@ -675,6 +675,53 @@ async function sendOrderNotificationEmail(order: OrderWithCustomer, settings: Aw
   }
 }
 
+async function sendOrderUpdateEmail(
+  order: OrderWithCustomer,
+  settings: Awaited<ReturnType<typeof ensureSettings>>,
+  previousJarCount: number
+) {
+  const mailSettings = mailSettingsFromEnv();
+
+  if (!mailSettings.enabled) {
+    console.warn(`E-mail notifikace není nastavená. Chybí: ${mailSettings.missing.join(", ")}.`);
+    return;
+  }
+
+  const amount = order.jarCount * settings.pricePerJarCzk;
+  const confirmUrl = adminConfirmUrl(order.id);
+  const previousJarCountText = formatJarCountText(previousJarCount);
+  const jarCountText = formatJarCountText(order.jarCount);
+  const subject = `Upravená objednávka medu: ${order.customer.name} (${previousJarCountText} → ${jarCountText})`;
+  const text = [
+    `Upravená webová objednávka medu`,
+    `Jméno: ${order.customer.name}`,
+    `Původní množství: ${previousJarCountText}`,
+    `Nové množství: ${jarCountText}`,
+    `Nová částka: ${formatMoneyText(amount)}`,
+    `Upraveno: ${formatDateText(order.updatedAt)}`,
+    `Potvrdit objednávku: ${confirmUrl}`
+  ].join("\n");
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
+      <h1 style="margin: 0 0 16px;">Upravená objednávka medu</h1>
+      <p><strong>Jméno:</strong> ${escapeHtml(order.customer.name)}</p>
+      <p><strong>Původní množství:</strong> ${escapeHtml(previousJarCountText)}</p>
+      <p><strong>Nové množství:</strong> ${escapeHtml(jarCountText)}</p>
+      <p><strong>Nová částka:</strong> ${escapeHtml(formatMoneyText(amount))}</p>
+      <p><strong>Upraveno:</strong> ${escapeHtml(formatDateText(order.updatedAt))}</p>
+      <p style="margin: 24px 0;">
+        <a href="${escapeHtml(confirmUrl)}" style="display: inline-block; border-radius: 999px; background: #059669; color: #ffffff; font-weight: 800; padding: 14px 22px; text-decoration: none;">Potvrdit objednávku</a>
+      </p>
+      <p style="color: #57534e; font-size: 13px;">Odkaz je časově omezený a neobsahuje admin heslo.</p>
+    </div>`;
+
+  try {
+    await sendMail({ to: mailSettings.adminEmail, subject, text, html });
+  } catch (error) {
+    console.error("Nepodařilo se odeslat e-mailovou notifikaci úpravy objednávky.", error);
+  }
+}
+
 async function sendOrderCancellationEmail(
   order: OrderWithCustomer,
   settings: Awaited<ReturnType<typeof ensureSettings>>,
@@ -952,8 +999,12 @@ app.patch(
         include: { customer: true }
       });
 
-      return { customer: sessionCustomer, order: updated, settings };
+      return { customer: sessionCustomer, order: updated, previousJarCount: order.jarCount, settings };
     });
+
+    if (result.previousJarCount !== result.order.jarCount) {
+      await sendOrderUpdateEmail(result.order, result.settings, result.previousJarCount);
+    }
 
     res.json({
       order: serializeOrder(result.order),
