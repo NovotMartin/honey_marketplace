@@ -4,7 +4,7 @@ Jednoduchá česká one-page aplikace pro rezervace sklenic medu.
 
 ## Stack
 
-- Vue 3 + Vite + TypeScript
+- Vue 3 + Vite + TypeScript + Vue Router
 - Tailwind CSS + Pinia
 - Node.js + Express
 - Prisma + SQLite
@@ -23,14 +23,16 @@ Jednoduchá česká one-page aplikace pro rezervace sklenic medu.
 
    ```env
    DATABASE_URL="file:./prisma/dev.db"
-   ADMIN_PASSWORD="admin123"
+   ADMIN_USERNAME="admin"
+   ADMIN_PASSWORD="zmen-me"
    PORT=3000
    ```
 
-3. Vytvoř SQLite databázi:
+3. Vytvoř SQLite databázi a vygeneruj Prisma klienta:
 
    ```bash
    yarn db:push
+   yarn prisma:generate
    ```
 
 4. Spusť frontend i backend:
@@ -60,15 +62,23 @@ Server potom servíruje API i statický frontend z `dist/client`.
 
 ## Admin
 
-Admin panel je dostupný na `/admin`. Heslo se čte z `ADMIN_PASSWORD` v `.env`.
+Admin se přihlašuje stejně jako běžný uživatel přes `/mujmed`. Jméno admina se čte z `ADMIN_USERNAME` (výchozí `admin`) a heslo z `ADMIN_PASSWORD`. Rezervované admin jméno nemůže použít běžný zákazník.
+
+Po přihlášení jako admin se v horním menu zobrazí ozubené kolečko `/admin` a odkaz `/objednavky`. Odhlášení v horní liště odhlásí i admin přístup.
 
 Admin umí:
 
 - nastavit celkový počet sklenic, cenu, IBAN, SWIFT/BIC, Revolut username/link a zprávu k platbě,
 - zobrazit stav SMTP/e-mail konfigurace a poslat testovací e-mail,
-- filtrovat, řadit, upravit, potvrdit nebo zrušit objednávky na `/objednavky`,
+- filtrovat, řadit, upravit, potvrdit, zrušit nebo úplně smazat zrušené objednávky na `/objednavky`,
 - vytvořit osobní/offline objednávku na `/objednavky`,
 - resetovat heslo zákazníkovi.
+
+Reset hesla zároveň zruší aktivní přihlášení daného zákazníka.
+
+## Přihlášení zákazníka
+
+Běžný zákazník se po první rezervaci nebo přihlášení uloží v prohlížeči přes session token v `localStorage`. Heslo se do prohlížeče neukládá. Přihlášení zůstává platné bez expirace, dokud zákazník nepoužije `Odhlásit` v `/mujmed` nebo dokud admin zákazníkovi neresetuje heslo.
 
 ## Platby
 
@@ -126,6 +136,7 @@ environment:
   NODE_ENV: production
   PORT: 3000
   DATABASE_URL: file:/app/data/honey.db
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
   ADMIN_PASSWORD: ${ADMIN_PASSWORD:-zmen-me}
   HONEY_TOTAL_JARS: ${HONEY_TOTAL_JARS:-}
   HONEY_PRICE_PER_JAR_CZK: ${HONEY_PRICE_PER_JAR_CZK:-}
@@ -169,6 +180,7 @@ Na TrueNAS použij compose aplikaci nebo vlastní Linux VM s Docker Compose. Dop
 
 ```bash
 export HONEY_IMAGE=ghcr.io/<owner>/<repo>:latest
+export ADMIN_USERNAME="admin"
 export ADMIN_PASSWORD="silne-admin-heslo"
 docker compose pull
 docker compose up -d

@@ -9,6 +9,7 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: file:/app/data/honey.db
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-zmen-me}
       HONEY_TOTAL_JARS: ${HONEY_TOTAL_JARS:-}
       HONEY_PRICE_PER_JAR_CZK: ${HONEY_PRICE_PER_JAR_CZK:-}
