@@ -37,7 +37,7 @@
 
 <script setup lang="ts">
 import { push } from "notivue";
-import { computed, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { createProfileOrder, createReservation } from "../api";
 import { useCheckoutStore } from "../stores/checkout";
@@ -53,13 +53,9 @@ const loading = ref(false);
 const reservation = reactive({ name: session.customerName, password: "", jarCount: 1 });
 const amount = computed(() => (market.publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount);
 
-async function submitReservation() {
-  if (checkout.reservationComplete) {
-    push.info("Rezervace už je vytvořená. Pro další objednávku použij tlačítko Chci další.");
-    await router.push("/mujmed");
-    return;
-  }
+onMounted(() => checkout.resetForAnotherReservation());
 
+async function submitReservation() {
   loading.value = true;
 
   try {

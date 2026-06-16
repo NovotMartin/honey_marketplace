@@ -4,7 +4,7 @@ import type { Order, Payment, ProfileOrder } from "../api";
 export type RecentPayment = {
   order: Pick<Order, "id" | "jarCount" | "customerName">;
   payment: Payment;
-  kind: "created" | "selected";
+  kind: "created" | "updated" | "selected";
 };
 
 export const useCheckoutStore = defineStore("checkout", {
@@ -16,6 +16,9 @@ export const useCheckoutStore = defineStore("checkout", {
     setCreated(order: Order, payment: Payment) {
       this.lastPayment = { order, payment, kind: "created" };
       this.reservationComplete = true;
+    },
+    setUpdated(order: Order, payment: Payment) {
+      this.lastPayment = { order, payment, kind: "updated" };
     },
     setSelected(order: ProfileOrder) {
       if (order.payment) {

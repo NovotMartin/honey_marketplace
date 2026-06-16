@@ -141,9 +141,11 @@ async function updateOwnOrder(order: ProfileOrder) {
     const response = await updateProfileOrder(session.sessionToken, order.id, { jarCount });
     session.setProfile(response.profile);
     market.setPublicState(response.publicState);
-    checkout.setSelected({ ...response.order, payment: response.payment });
+    checkout.setUpdated(response.order, response.payment);
     editingOrderIds[order.id] = false;
     syncProfileEditing();
+    await nextTick();
+    document.getElementById("platba")?.scrollIntoView({ behavior: "smooth", block: "start" });
     push.success("Rezervace je upravená.");
   } catch (error) {
     push.error(error instanceof Error ? error.message : "Rezervaci se nepodařilo upravit.");

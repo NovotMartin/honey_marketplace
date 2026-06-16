@@ -17,6 +17,7 @@
   "dependencies": {
     "@prisma/client": "6.19.3",
     "bcryptjs": "latest",
+    "canvas-confetti": "latest",
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",

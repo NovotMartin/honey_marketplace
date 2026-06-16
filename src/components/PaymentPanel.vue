@@ -1,7 +1,7 @@
 <template>
   <div id="platba" class="panel border-4 border-emerald-200 bg-emerald-50">
     <p class="text-sm font-black uppercase tracking-[0.25em] text-emerald-700">
-      {{ payment.kind === "created" ? "Rezervace vytvořena" : "Platba" }}
+      {{ payment.kind === "created" ? "Rezervace vytvořena" : payment.kind === "updated" ? "Rezervace upravena" : "Platba" }}
     </p>
     <h2 class="mt-2 font-display text-3xl font-black text-stone-950">
       {{ formatJarCount(payment.order.jarCount) }} pro {{ payment.order.customerName }}
@@ -33,11 +33,25 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted, watch } from "vue";
 import AnotherOrderButton from "./AnotherOrderButton.vue";
+import { launchFireworks } from "../services/confetti";
 import type { RecentPayment } from "../stores/checkout";
 import { formatJarCount, money } from "../utils/format";
 
-defineProps<{ payment: RecentPayment }>();
+const props = defineProps<{ payment: RecentPayment }>();
 defineEmits<{ another: []; clear: [] }>();
 
+function fireworksKey() {
+  return `${props.payment.kind}:${props.payment.order.id}:${props.payment.order.jarCount}:${props.payment.payment.amountCzk}`;
+}
+
+function launchPaymentFireworks() {
+  if (props.payment.kind === "created" || props.payment.kind === "updated") {
+    void launchFireworks(props.payment.kind, { force: true });
+  }
+}
+
+watch(fireworksKey, launchPaymentFireworks);
+onMounted(launchPaymentFireworks);
 </script>
