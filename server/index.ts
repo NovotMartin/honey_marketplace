@@ -1168,14 +1168,10 @@ app.patch(
         include: { customer: true }
       });
 
-      return { updated, shouldSendCancellationEmail: order.status !== "CANCELLED" && updated.status === "CANCELLED" };
+      return updated;
     });
 
-    if (result.shouldSendCancellationEmail) {
-      await sendOrderCancellationEmail(result.updated, await ensureSettings(prisma), "správce");
-    }
-
-    res.json({ order: serializeOrder(result.updated), publicState: await publicState() });
+    res.json({ order: serializeOrder(result), publicState: await publicState() });
   })
 );
 
@@ -1261,16 +1257,11 @@ app.patch(
       throw new HttpError(404, "Rezervace nebyla nalezena.");
     }
 
-    const shouldSendCancellationEmail = order.status !== "CANCELLED";
     const updated = await prisma.order.update({
       where: { id: order.id },
       data: { status: "CANCELLED", cancelledAt: new Date() },
       include: { customer: true }
     });
-
-    if (shouldSendCancellationEmail) {
-      await sendOrderCancellationEmail(updated, await ensureSettings(prisma), "správce");
-    }
 
     res.json({ order: serializeOrder(updated), publicState: await publicState() });
   })
