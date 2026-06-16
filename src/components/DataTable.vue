@@ -1,0 +1,143 @@
+<script setup lang="ts">
+import { computed, ref } from "vue";
+
+export type DataTableColumn = {
+  key: string;
+  label: string;
+  align?: "left" | "right";
+  sortable?: boolean;
+  headerClass?: string;
+  cellClass?: string;
+  getSortValue?: (row: unknown) => Date | number | string | null | undefined;
+  getFilterValue?: (row: unknown) => number | string | null | undefined;
+};
+
+const props = withDefaults(
+  defineProps<{
+    rows: unknown[];
+    columns: DataTableColumn[];
+    rowKey: string | ((row: unknown) => string);
+    emptyText?: string;
+    filterPlaceholder?: string;
+  }>(),
+  {
+    emptyText: "Žádná data.",
+    filterPlaceholder: "Filtrovat..."
+  }
+);
+
+const filter = ref("");
+const sortKey = ref(props.columns.find((column) => column.sortable)?.key ?? "");
+const sortDirection = ref<"asc" | "desc">("asc");
+
+const activeSortColumn = computed(() => props.columns.find((column) => column.key === sortKey.value));
+
+const filteredRows = computed(() => {
+  const needle = filter.value.trim().toLocaleLowerCase("cs-CZ");
+
+  if (!needle) {
+    return props.rows;
+  }
+
+  return props.rows.filter((row) =>
+    props.columns.some((column) => String(column.getFilterValue?.(row) ?? "").toLocaleLowerCase("cs-CZ").includes(needle))
+  );
+});
+
+const visibleRows = computed(() => {
+  const column = activeSortColumn.value;
+
+  if (!column?.sortable) {
+    return filteredRows.value;
+  }
+
+  return [...filteredRows.value].sort((a, b) => compareValues(column.getSortValue?.(a), column.getSortValue?.(b)));
+});
+
+function compareValues(left: Date | number | string | null | undefined, right: Date | number | string | null | undefined) {
+  const direction = sortDirection.value === "asc" ? 1 : -1;
+  const leftValue = normalizeSortValue(left);
+  const rightValue = normalizeSortValue(right);
+
+  if (typeof leftValue === "number" && typeof rightValue === "number") {
+    return (leftValue - rightValue) * direction;
+  }
+
+  return String(leftValue).localeCompare(String(rightValue), "cs-CZ", { numeric: true, sensitivity: "base" }) * direction;
+}
+
+function normalizeSortValue(value: Date | number | string | null | undefined) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  return value ?? "";
+}
+
+function toggleSort(column: DataTableColumn) {
+  if (!column.sortable) {
+    return;
+  }
+
+  if (sortKey.value === column.key) {
+    sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
+    return;
+  }
+
+  sortKey.value = column.key;
+  sortDirection.value = "asc";
+}
+
+function keyFor(row: unknown) {
+  if (typeof props.rowKey === "function") {
+    return props.rowKey(row);
+  }
+
+  return String((row as Record<string, unknown>)[props.rowKey]);
+}
+</script>
+
+<template>
+  <div class="space-y-4">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input v-model="filter" class="input max-w-md text-stone-900" type="search" :placeholder="filterPlaceholder" />
+      <p class="text-sm font-bold text-honey-100">
+        Zobrazeno {{ visibleRows.length }} z {{ rows.length }}
+      </p>
+    </div>
+
+    <div class="overflow-x-auto rounded-3xl bg-white/10 p-4">
+      <table class="w-full min-w-[1080px] text-left text-sm">
+        <thead class="text-honey-200">
+          <tr>
+            <th v-for="column in columns" :key="column.key" class="py-3 pr-3" :class="[column.headerClass, column.align === 'right' ? 'text-right' : 'text-left']">
+              <button
+                v-if="column.sortable"
+                class="inline-flex items-center gap-2 font-black transition hover:text-white"
+                :class="column.align === 'right' ? 'justify-end' : 'justify-start'"
+                type="button"
+                @click="toggleSort(column)"
+              >
+                <span>{{ column.label }}</span>
+                <span class="text-xs">{{ sortKey === column.key ? (sortDirection === "asc" ? "▲" : "▼") : "↕" }}</span>
+              </button>
+              <span v-else>{{ column.label }}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="visibleRows.length === 0" class="border-t border-white/10">
+            <td class="py-5 text-stone-200" :colspan="columns.length">{{ emptyText }}</td>
+          </tr>
+          <tr v-for="row in visibleRows" :key="keyFor(row)" class="border-t border-white/10">
+            <td v-for="column in columns" :key="column.key" class="py-3 pr-3 align-middle" :class="[column.cellClass, column.align === 'right' ? 'text-right' : 'text-left']">
+              <slot :name="`cell-${column.key}`" :row="row" :column="column">
+                {{ column.getFilterValue?.(row) ?? "" }}
+              </slot>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</template>

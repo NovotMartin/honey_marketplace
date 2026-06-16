@@ -1,0 +1,45 @@
+{
+  "name": "honey-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "yarn@1.22.22",
+  "scripts": {
+    "dev": "concurrently \"yarn dev:server\" \"yarn dev:client\"",
+    "dev:client": "vite --host 0.0.0.0",
+    "dev:server": "tsx watch server/index.ts",
+    "build": "vue-tsc --noEmit && vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "prisma:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "latest",
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "helmet": "latest",
+    "pinia": "latest",
+    "prisma": "6.19.3",
+    "qrcode": "latest",
+    "vue": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/qrcode": "latest",
+    "@vitejs/plugin-vue": "latest",
+    "autoprefixer": "latest",
+    "concurrently": "latest",
+    "postcss": "latest",
+    "tailwindcss": "^3.4.17",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vue-tsc": "latest"
+  }
+}
