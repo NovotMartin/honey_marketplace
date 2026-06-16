@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --nv-root-top: 7rem;
+  }
+
   html {
     scroll-behavior: smooth;
   }
@@ -94,16 +98,105 @@
   }
 
   .admin-card {
-    @apply rounded-3xl border border-white/10 bg-white/10 p-5 text-white;
+    @apply rounded-3xl border border-honey-100 bg-white/80 p-5 text-stone-800 shadow-sm;
   }
 
   .admin-title {
-    @apply mb-4 text-2xl font-black text-white;
+    @apply mb-4 text-2xl font-black text-stone-950;
   }
 
   .admin-field {
-    @apply text-sm font-black text-stone-200;
+    @apply text-sm font-black text-stone-700;
   }
+}
+
+.swal2-popup.honey-dialog {
+  border: 3px solid rgba(251, 191, 36, 0.55);
+  border-radius: 2rem;
+  background:
+    radial-gradient(circle at top left, rgba(254, 243, 199, 0.9), transparent 18rem),
+    linear-gradient(135deg, rgba(255, 251, 235, 0.98), rgba(255, 247, 237, 0.98));
+  box-shadow: 0 24px 80px rgba(120, 53, 15, 0.25);
+  color: #1c1917;
+  padding: 1.5rem;
+}
+
+.swal2-title.honey-dialog-title {
+  color: #1c1917;
+  font-family: "Baloo 2", ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(1.75rem, 4vw, 2.35rem);
+  font-weight: 900;
+  line-height: 1.05;
+  padding-top: 0.25rem;
+}
+
+.swal2-html-container.honey-dialog-text {
+  color: #57534e;
+  font-weight: 700;
+  line-height: 1.55;
+  margin-top: 0.75rem;
+}
+
+.swal2-actions.honey-dialog-actions {
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.honey-dialog-button {
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0.85rem 1.25rem;
+  transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.honey-dialog-button:focus-visible {
+  outline: 3px solid rgba(251, 191, 36, 0.55);
+  outline-offset: 3px;
+}
+
+.honey-dialog-confirm-danger {
+  background: #dc2626;
+  color: #fff;
+}
+
+.honey-dialog-confirm-danger:hover {
+  background: #b91c1c;
+  box-shadow: 0 14px 30px rgba(185, 28, 28, 0.22);
+  transform: translateY(-1px);
+}
+
+.honey-dialog-confirm-success {
+  background: #059669;
+  color: #fff;
+}
+
+.honey-dialog-confirm-success:hover {
+  background: #047857;
+  box-shadow: 0 14px 30px rgba(5, 150, 105, 0.22);
+  transform: translateY(-1px);
+}
+
+.honey-dialog-cancel {
+  background: #fef3c7;
+  color: #78350f;
+}
+
+.honey-dialog-cancel:hover {
+  background: #fde68a;
+  transform: translateY(-1px);
+}
+
+.swal2-icon.swal2-warning {
+  border-color: #f59e0b;
+  color: #d97706;
+}
+
+.swal2-icon.swal2-info {
+  border-color: #fbbf24;
+  color: #b45309;
 }
 
 .honeycomb-bg {

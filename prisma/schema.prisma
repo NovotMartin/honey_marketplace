@@ -36,6 +36,20 @@ model Customer {
   passwordHash String
   createdAt    DateTime @default(now())
   orders       Order[]
+  sessions     CustomerSession[]
+}
+
+model CustomerSession {
+  id         String    @id @default(cuid())
+  customerId String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([revokedAt])
 }
 
 model Order {

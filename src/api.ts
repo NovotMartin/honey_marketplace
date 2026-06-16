@@ -50,8 +50,12 @@ export type PublicState = {
 export type ProfileOrder = Order & { payment: Payment | null };
 
 export type ProfileResponse = {
-  customer: { id: string; name: string };
+  customer: { id: string; name: string; isAdmin: boolean };
   orders: ProfileOrder[];
+};
+
+export type AuthProfileResponse = ProfileResponse & {
+  sessionToken: string;
 };
 
 export type AdminSettings = {
@@ -113,113 +117,134 @@ export function getPublicState() {
 }
 
 export function createReservation(payload: { name: string; password: string; jarCount: number }) {
-  return request<{ order: Order; payment: Payment; publicState: PublicState }>("/api/reservations", {
+  return request<{ order: Order; payment: Payment; profile: ProfileResponse; sessionToken: string; publicState: PublicState }>("/api/reservations", {
     method: "POST",
     body: JSON.stringify(payload)
   });
 }
 
 export function loginProfile(payload: { name: string; password: string }) {
-  return request<ProfileResponse>("/api/login", {
+  return request<AuthProfileResponse>("/api/login", {
     method: "POST",
     body: JSON.stringify(payload)
   });
 }
 
-export function createProfileOrder(payload: { name: string; password: string; jarCount: number }) {
-  return request<{ order: Order; payment: Payment; profile: ProfileResponse; publicState: PublicState }>("/api/profile/orders", {
+function bearerHeaders(sessionToken: string) {
+  return { Authorization: `Bearer ${sessionToken}` };
+}
+
+export function getCurrentProfile(sessionToken: string) {
+  return request<ProfileResponse>("/api/profile/me", {
+    headers: bearerHeaders(sessionToken)
+  });
+}
+
+export function logoutProfile(sessionToken: string) {
+  return request<{ ok: true }>("/api/logout", {
     method: "POST",
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateProfileOrder(orderId: string, payload: { name: string; password: string; jarCount: number }) {
-  return request<{ order: Order; payment: Payment; profile: ProfileResponse; publicState: PublicState }>(`/api/profile/orders/${orderId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload)
-  });
-}
-
-export function cancelProfileOrder(orderId: string, payload: { name: string; password: string }) {
-  return request<{ profile: ProfileResponse; publicState: PublicState }>(`/api/profile/orders/${orderId}`, {
-    method: "DELETE",
-    body: JSON.stringify(payload)
-  });
-}
-
-export function adminLogin(password: string) {
-  return request<{ ok: true }>("/api/admin/login", {
-    method: "POST",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify({})
   });
 }
 
-export function getAdminDashboard(password: string) {
-  return request<AdminDashboard>("/api/admin/dashboard", {
-    headers: { "x-admin-password": password }
-  });
-}
-
-export function saveAdminSettings(password: string, payload: Omit<AdminSettings, "id" | "updatedAt">) {
-  return request<{ settings: AdminSettings; publicState: PublicState }>("/api/admin/settings", {
-    method: "PATCH",
-    headers: { "x-admin-password": password },
+export function createProfileOrder(sessionToken: string, payload: { jarCount: number }) {
+  return request<{ order: Order; payment: Payment; profile: ProfileResponse; publicState: PublicState }>("/api/profile/orders", {
+    method: "POST",
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify(payload)
   });
 }
 
-export function adminSendTestEmail(password: string, to: string) {
+export function updateProfileOrder(sessionToken: string, orderId: string, payload: { jarCount: number }) {
+  return request<{ order: Order; payment: Payment; profile: ProfileResponse; publicState: PublicState }>(`/api/profile/orders/${orderId}`, {
+    method: "PATCH",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export function cancelProfileOrder(sessionToken: string, orderId: string) {
+  return request<{ profile: ProfileResponse; publicState: PublicState }>(`/api/profile/orders/${orderId}`, {
+    method: "DELETE",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({})
+  });
+}
+
+export function getAdminDashboard(sessionToken: string) {
+  return request<AdminDashboard>("/api/admin/dashboard", {
+    headers: bearerHeaders(sessionToken)
+  });
+}
+
+export function saveAdminSettings(sessionToken: string, payload: Omit<AdminSettings, "id" | "updatedAt">) {
+  return request<{ settings: AdminSettings; publicState: PublicState }>("/api/admin/settings", {
+    method: "PATCH",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export function adminSendTestEmail(sessionToken: string, to: string) {
   return request<{ ok: true; message: string; mailSettings: MailSettings }>("/api/admin/email/test", {
     method: "POST",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify({ to })
   });
 }
 
 export function adminCreateOrder(
-  password: string,
+  sessionToken: string,
   payload: { name: string; jarCount: number; password?: string; confirmed: boolean }
 ) {
   return request<{ order: Order; publicState: PublicState }>("/api/admin/orders", {
     method: "POST",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify(payload)
   });
 }
 
 export function adminUpdateOrder(
-  password: string,
+  sessionToken: string,
   orderId: string,
   payload: { name: string; jarCount: number; status: OrderStatus; source: OrderSource }
 ) {
   return request<{ order: Order; publicState: PublicState }>(`/api/admin/orders/${orderId}`, {
     method: "PATCH",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify(payload)
   });
 }
 
-export function adminConfirmOrder(password: string, orderId: string) {
+export function adminConfirmOrder(sessionToken: string, orderId: string) {
   return request<{ order: Order; publicState: PublicState }>(`/api/admin/orders/${orderId}/confirm`, {
     method: "PATCH",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify({})
   });
 }
 
-export function adminCancelOrder(password: string, orderId: string) {
+export function adminCancelOrder(sessionToken: string, orderId: string) {
   return request<{ order: Order; publicState: PublicState }>(`/api/admin/orders/${orderId}/cancel`, {
     method: "PATCH",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify({})
   });
 }
 
-export function adminResetPassword(password: string, customerId: string, newPassword: string) {
+export function adminDeleteOrder(sessionToken: string, orderId: string) {
+  return request<{ ok: true; publicState: PublicState }>(`/api/admin/orders/${orderId}`, {
+    method: "DELETE",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({})
+  });
+}
+
+export function adminResetPassword(sessionToken: string, customerId: string, newPassword: string) {
   return request<{ customer: { id: string; name: string; createdAt: string } }>(`/api/admin/customers/${customerId}/password`, {
     method: "PATCH",
-    headers: { "x-admin-password": password },
+    headers: bearerHeaders(sessionToken),
     body: JSON.stringify({ password: newPassword })
   });
 }

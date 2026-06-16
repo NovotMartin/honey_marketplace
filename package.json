@@ -26,7 +26,9 @@
     "pinia": "latest",
     "prisma": "6.19.3",
     "qrcode": "latest",
+    "sweetalert2": "latest",
     "vue": "latest",
+    "vue-router": "4.6.4",
     "zod": "latest"
   },
   "devDependencies": {

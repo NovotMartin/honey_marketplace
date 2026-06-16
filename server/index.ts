@@ -18,6 +18,17 @@ const settingsId = 1;
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 type OrderWithCustomer = Prisma.OrderGetPayload<{ include: { customer: true } }>;
+type CustomerWithOrders = Prisma.CustomerGetPayload<{ include: { orders: true } }>;
+type CustomerSessionRecord = { id: string; customerId: string; tokenHash: string; createdAt: Date; lastUsedAt: Date; revokedAt: Date | null };
+type CustomerSessionDelegate = {
+  create(options: { data: { customerId: string; tokenHash: string; lastUsedAt?: Date } }): Promise<CustomerSessionRecord>;
+  findUnique(options: {
+    where: { tokenHash: string };
+    include?: { customer?: { include?: { orders?: { orderBy?: { createdAt: "desc" } } } } };
+  }): Promise<(CustomerSessionRecord & { customer: CustomerWithOrders }) | null>;
+  update(options: { where: { id: string }; data: Partial<Pick<CustomerSessionRecord, "lastUsedAt" | "revokedAt">> }): Promise<CustomerSessionRecord>;
+  updateMany(options: { where: { customerId?: string; tokenHash?: string; revokedAt?: null }; data: { revokedAt?: Date; lastUsedAt?: Date } }): Promise<unknown>;
+};
 type MailTransport = { sendMail(options: { from: string; to: string; subject: string; text: string; html: string }): Promise<unknown> };
 type NodemailerModule = {
   createTransport?: (options: Record<string, unknown>) => MailTransport;
@@ -94,6 +105,18 @@ type SettingsEnvOverrides = Partial<
 function optionalEnv(name: string) {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
+}
+
+function adminUsername() {
+  return optionalEnv("ADMIN_USERNAME") ?? "admin";
+}
+
+function sameLoginName(left: string, right: string) {
+  return left.trim().toLocaleLowerCase("cs-CZ") === right.trim().toLocaleLowerCase("cs-CZ");
+}
+
+function isAdminName(name: string) {
+  return sameLoginName(name, adminUsername());
 }
 
 function optionalIntEnv(name: string) {
@@ -281,13 +304,33 @@ async function assertCapacity(db: DbClient, jarCount: number, excludeOrderId?: s
 
   if (activeJars + jarCount > settings.totalJars) {
     const available = Math.max(settings.totalJars - activeJars, 0);
-    throw new HttpError(409, `Tolik sklenic už není volných. Dostupné množství: ${available}.`);
+    throw new HttpError(409, `Tolik sklenic už není volných. Dostupné množství: ${formatJarCountText(available)}.`);
   }
 
   return settings;
 }
 
 async function verifyCustomer(name: string, password: string) {
+  if (isAdminName(name)) {
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!adminPassword || password !== adminPassword) {
+      throw new HttpError(401, "Jméno nebo heslo nesedí.");
+    }
+
+    const adminCustomer = await getOrCreateCustomerForAdmin(prisma, adminUsername());
+    const customer = await prisma.customer.findUnique({
+      where: { id: adminCustomer.id },
+      include: { orders: { orderBy: { createdAt: "desc" } } }
+    });
+
+    if (!customer) {
+      throw new HttpError(404, "Admin profil nebyl nalezen.");
+    }
+
+    return customer;
+  }
+
   const customer = await prisma.customer.findUnique({
     where: { name },
     include: { orders: { orderBy: { createdAt: "desc" } } }
@@ -300,7 +343,55 @@ async function verifyCustomer(name: string, password: string) {
   return customer;
 }
 
+function customerSessions(db: DbClient) {
+  return (db as unknown as { customerSession: CustomerSessionDelegate }).customerSession;
+}
+
+function sessionTokenHash(token: string) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+async function createCustomerSession(db: DbClient, customerId: string) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  await customerSessions(db).create({ data: { customerId, tokenHash: sessionTokenHash(token), lastUsedAt: new Date() } });
+  return token;
+}
+
+function bearerToken(req: Request) {
+  const header = req.header("authorization") ?? "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+async function customerFromSession(req: Request) {
+  const token = bearerToken(req);
+
+  if (!token) {
+    throw new HttpError(401, "Přihlášení vypršelo nebo chybí.");
+  }
+
+  const session = await customerSessions(prisma).findUnique({
+    where: { tokenHash: sessionTokenHash(token) },
+    include: { customer: { include: { orders: { orderBy: { createdAt: "desc" } } } } }
+  });
+
+  if (!session || session.revokedAt) {
+    throw new HttpError(401, "Přihlášení vypršelo. Přihlas se znovu.");
+  }
+
+  await customerSessions(prisma).update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
+  return { customer: session.customer, token };
+}
+
+async function revokeCustomerSessions(customerId: string) {
+  await customerSessions(prisma).updateMany({ where: { customerId, revokedAt: null }, data: { revokedAt: new Date() } });
+}
+
 async function getOrCreateCustomerForUser(db: DbClient, name: string, password: string) {
+  if (isAdminName(name)) {
+    throw new HttpError(403, `Jméno ${adminUsername()} je vyhrazené pro admina. Přihlas se přes Můj med.`);
+  }
+
   const existing = await db.customer.findUnique({ where: { name } });
 
   if (existing) {
@@ -369,6 +460,12 @@ function escapeHtml(value: string) {
 
 function formatMoneyText(value: number) {
   return new Intl.NumberFormat("cs-CZ", { style: "currency", currency: "CZK", maximumFractionDigits: 0 }).format(value);
+}
+
+const jarPluralRules = new Intl.PluralRules("cs-CZ");
+
+function formatJarCountText(count: number) {
+  return `${count} ${jarPluralRules.select(count) === "other" ? "sklenic" : "sklenice"}`;
 }
 
 function formatDateText(value: Date) {
@@ -548,11 +645,12 @@ async function sendOrderNotificationEmail(order: OrderWithCustomer, settings: Aw
 
   const amount = order.jarCount * settings.pricePerJarCzk;
   const confirmUrl = adminConfirmUrl(order.id);
-  const subject = `Nová objednávka medu: ${order.customer.name} (${order.jarCount} ks)`;
+  const jarCountText = formatJarCountText(order.jarCount);
+  const subject = `Nová objednávka medu: ${order.customer.name} (${jarCountText})`;
   const text = [
     `Nová webová objednávka medu`,
     `Jméno: ${order.customer.name}`,
-    `Počet sklenic: ${order.jarCount}`,
+    `Množství: ${jarCountText}`,
     `Částka: ${formatMoneyText(amount)}`,
     `Vytvořeno: ${formatDateText(order.createdAt)}`,
     `Potvrdit objednávku: ${confirmUrl}`
@@ -561,7 +659,7 @@ async function sendOrderNotificationEmail(order: OrderWithCustomer, settings: Aw
     <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
       <h1 style="margin: 0 0 16px;">Nová objednávka medu</h1>
       <p><strong>Jméno:</strong> ${escapeHtml(order.customer.name)}</p>
-      <p><strong>Počet sklenic:</strong> ${order.jarCount}</p>
+      <p><strong>Množství:</strong> ${escapeHtml(jarCountText)}</p>
       <p><strong>Částka:</strong> ${escapeHtml(formatMoneyText(amount))}</p>
       <p><strong>Vytvořeno:</strong> ${escapeHtml(formatDateText(order.createdAt))}</p>
       <p style="margin: 24px 0;">
@@ -590,11 +688,12 @@ async function sendOrderCancellationEmail(
   }
 
   const amount = order.jarCount * settings.pricePerJarCzk;
-  const subject = `Zrušená rezervace medu: ${order.customer.name} (${order.jarCount} ks)`;
+  const jarCountText = formatJarCountText(order.jarCount);
+  const subject = `Zrušená rezervace medu: ${order.customer.name} (${jarCountText})`;
   const text = [
     `Zrušená rezervace medu`,
     `Jméno: ${order.customer.name}`,
-    `Počet sklenic: ${order.jarCount}`,
+    `Množství: ${jarCountText}`,
     `Částka: ${formatMoneyText(amount)}`,
     `Vytvořeno: ${formatDateText(order.createdAt)}`,
     `Zrušeno: ${formatDateText(order.cancelledAt ?? new Date())}`,
@@ -604,7 +703,7 @@ async function sendOrderCancellationEmail(
     <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
       <h1 style="margin: 0 0 16px;">Zrušená rezervace medu</h1>
       <p><strong>Jméno:</strong> ${escapeHtml(order.customer.name)}</p>
-      <p><strong>Počet sklenic:</strong> ${order.jarCount}</p>
+      <p><strong>Množství:</strong> ${escapeHtml(jarCountText)}</p>
       <p><strong>Částka:</strong> ${escapeHtml(formatMoneyText(amount))}</p>
       <p><strong>Vytvořeno:</strong> ${escapeHtml(formatDateText(order.createdAt))}</p>
       <p><strong>Zrušeno:</strong> ${escapeHtml(formatDateText(order.cancelledAt ?? new Date()))}</p>
@@ -673,15 +772,14 @@ async function publicState() {
   };
 }
 
-async function customerProfile(name: string, password: string) {
-  const customer = await verifyCustomer(name, password);
+async function customerProfileForCustomer(customer: CustomerWithOrders) {
   const settings = await ensureSettings(prisma);
   const payments = await Promise.all(
     customer.orders.map((order) => (order.status === "CANCELLED" ? Promise.resolve(null) : paymentForOrder(settings, order, customer.name)))
   );
 
   return {
-    customer: { id: customer.id, name: customer.name },
+    customer: { id: customer.id, name: customer.name, isAdmin: isAdminName(customer.name) },
     orders: customer.orders.map((order, index) => ({
       id: order.id,
       customerId: customer.id,
@@ -697,16 +795,33 @@ async function customerProfile(name: string, password: string) {
   };
 }
 
-const adminAuth: RequestHandler = (req, _res, next) => {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  const provided = req.header("x-admin-password") ?? "";
+async function customerProfileById(customerId: string) {
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    include: { orders: { orderBy: { createdAt: "desc" } } }
+  });
 
-  if (!adminPassword || provided !== adminPassword) {
-    next(new HttpError(401, "Admin heslo nesedí."));
-    return;
+  if (!customer) {
+    throw new HttpError(404, "Profil nebyl nalezen.");
   }
 
-  next();
+  return customerProfileForCustomer(customer);
+}
+
+async function customerProfile(name: string, password: string) {
+  return customerProfileForCustomer(await verifyCustomer(name, password));
+}
+
+const adminAuth: RequestHandler = (req, _res, next) => {
+  Promise.resolve(customerFromSession(req))
+    .then(({ customer }) => {
+      if (!isAdminName(customer.name)) {
+        throw new HttpError(403, "Tahle část je jen pro admina.");
+      }
+
+      next();
+    })
+    .catch(next);
 };
 
 app.get(
@@ -738,10 +853,13 @@ app.post(
     });
 
     await sendOrderNotificationEmail(result.order, result.settings);
+    const sessionToken = await createCustomerSession(prisma, result.customer.id);
 
     res.status(201).json({
       order: serializeOrder(result.order),
       payment: await paymentForOrder(result.settings, result.order, result.customer.name),
+      profile: await customerProfileById(result.customer.id),
+      sessionToken,
       publicState: await publicState()
     });
   })
@@ -751,21 +869,43 @@ app.post(
   "/api/login",
   asyncRoute(async (req, res) => {
     const input = credentialsSchema.parse(req.body);
-    res.json(await customerProfile(input.name, input.password));
+    const customer = await verifyCustomer(input.name, input.password);
+    res.json({ ...(await customerProfileForCustomer(customer)), sessionToken: await createCustomerSession(prisma, customer.id) });
+  })
+);
+
+app.get(
+  "/api/profile/me",
+  asyncRoute(async (req, res) => {
+    const { customer } = await customerFromSession(req);
+    res.json(await customerProfileForCustomer(customer));
+  })
+);
+
+app.post(
+  "/api/logout",
+  asyncRoute(async (req, res) => {
+    const token = bearerToken(req);
+
+    if (token) {
+      await customerSessions(prisma).updateMany({ where: { tokenHash: sessionTokenHash(token), revokedAt: null }, data: { revokedAt: new Date() } });
+    }
+
+    res.json({ ok: true });
   })
 );
 
 app.post(
   "/api/profile/orders",
   asyncRoute(async (req, res) => {
-    const input = reservationSchema.parse(req.body);
+    const input = z.object({ jarCount: jarCountInput }).parse(req.body);
+    const { customer: sessionCustomer } = await customerFromSession(req);
 
     const result = await prisma.$transaction(async (tx) => {
-      const customer = await getOrCreateCustomerForUser(tx, input.name, input.password);
       const settings = await assertCapacity(tx, input.jarCount);
       const order = await tx.order.create({
         data: {
-          customerId: customer.id,
+          customerId: sessionCustomer.id,
           jarCount: input.jarCount,
           status: "PENDING",
           source: "USER"
@@ -773,7 +913,7 @@ app.post(
         include: { customer: true }
       });
 
-      return { customer, order, settings };
+      return { customer: sessionCustomer, order, settings };
     });
 
     await sendOrderNotificationEmail(result.order, result.settings);
@@ -781,7 +921,7 @@ app.post(
     res.status(201).json({
       order: serializeOrder(result.order),
       payment: await paymentForOrder(result.settings, result.order, result.customer.name),
-      profile: await customerProfile(input.name, input.password),
+      profile: await customerProfileById(result.customer.id),
       publicState: await publicState()
     });
   })
@@ -790,14 +930,14 @@ app.post(
 app.patch(
   "/api/profile/orders/:orderId",
   asyncRoute(async (req, res) => {
-    const input = reservationSchema.parse(req.body);
+    const input = z.object({ jarCount: jarCountInput }).parse(req.body);
     const { orderId } = z.object({ orderId: z.string().min(1) }).parse(req.params);
+    const { customer: sessionCustomer } = await customerFromSession(req);
 
     const result = await prisma.$transaction(async (tx) => {
-      const customer = await getOrCreateCustomerForUser(tx, input.name, input.password);
       const order = await tx.order.findUnique({ where: { id: orderId }, include: { customer: true } });
 
-      if (!order || order.customerId !== customer.id) {
+      if (!order || order.customerId !== sessionCustomer.id) {
         throw new HttpError(404, "Rezervace nebyla nalezena.");
       }
 
@@ -812,13 +952,13 @@ app.patch(
         include: { customer: true }
       });
 
-      return { customer, order: updated, settings };
+      return { customer: sessionCustomer, order: updated, settings };
     });
 
     res.json({
       order: serializeOrder(result.order),
       payment: await paymentForOrder(result.settings, result.order, result.customer.name),
-      profile: await customerProfile(input.name, input.password),
+      profile: await customerProfileById(result.customer.id),
       publicState: await publicState()
     });
   })
@@ -827,9 +967,8 @@ app.patch(
 app.delete(
   "/api/profile/orders/:orderId",
   asyncRoute(async (req, res) => {
-    const input = credentialsSchema.parse(req.body);
     const { orderId } = z.object({ orderId: z.string().min(1) }).parse(req.params);
-    const customer = await verifyCustomer(input.name, input.password);
+    const { customer } = await customerFromSession(req);
     const order = await prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
 
     if (!order || order.customerId !== customer.id) {
@@ -848,7 +987,7 @@ app.delete(
     await sendOrderCancellationEmail(updated, await ensureSettings(prisma), "uživatel");
 
     res.json({
-      profile: await customerProfile(input.name, input.password),
+      profile: await customerProfileById(customer.id),
       publicState: await publicState()
     });
   })
@@ -1038,7 +1177,7 @@ app.get(
     res.send(
       adminActionHtmlPage(
         "Objednávka potvrzena",
-        `Objednávka pro ${updated.customer.name} na ${updated.jarCount} sklenic je potvrzená.`
+        `Objednávka pro ${updated.customer.name} na ${formatJarCountText(updated.jarCount)} je potvrzená.`
       )
     );
   })
@@ -1086,17 +1225,48 @@ app.patch(
   })
 );
 
+app.delete(
+  "/api/admin/orders/:orderId",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { orderId } = z.object({ orderId: z.string().min(1) }).parse(req.params);
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+    if (!order) {
+      throw new HttpError(404, "Rezervace nebyla nalezena.");
+    }
+
+    if (order.status !== "CANCELLED") {
+      throw new HttpError(409, "Úplně smazat jde jen zrušenou objednávku.");
+    }
+
+    await prisma.order.delete({ where: { id: order.id } });
+    res.json({ ok: true, publicState: await publicState() });
+  })
+);
+
 app.patch(
   "/api/admin/customers/:customerId/password",
   adminAuth,
   asyncRoute(async (req, res) => {
     const input = resetPasswordSchema.parse(req.body);
     const { customerId } = z.object({ customerId: z.string().min(1) }).parse(req.params);
+    const existing = await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } });
+
+    if (!existing) {
+      throw new HttpError(404, "Zákazník nebyl nalezen.");
+    }
+
+    if (isAdminName(existing.name)) {
+      throw new HttpError(409, "Admin heslo se mění v env proměnné ADMIN_PASSWORD.");
+    }
+
     const customer = await prisma.customer.update({
       where: { id: customerId },
       data: { passwordHash: await bcrypt.hash(input.password, 12) },
       select: { id: true, name: true, createdAt: true }
     });
+    await revokeCustomerSessions(customer.id);
 
     res.json({ customer });
   })

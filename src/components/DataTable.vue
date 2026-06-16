@@ -1,3 +1,48 @@
+<template>
+  <div class="space-y-4">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input v-model="filter" class="input max-w-md text-stone-900" type="search" :placeholder="filterPlaceholder" />
+      <p class="text-sm font-bold text-stone-600">
+        Zobrazeno {{ visibleRows.length }} z {{ rows.length }}
+      </p>
+    </div>
+
+    <div class="overflow-x-auto rounded-3xl bg-white/75 p-4 ring-1 ring-honey-100">
+      <table class="w-full min-w-[1080px] text-left text-sm">
+        <thead class="text-stone-500">
+          <tr>
+            <th v-for="column in columns" :key="column.key" class="py-3 pr-3" :class="[column.headerClass, column.align === 'right' ? 'text-right' : 'text-left']">
+              <button
+                v-if="column.sortable"
+                class="inline-flex items-center gap-2 font-black transition hover:text-honey-700"
+                :class="column.align === 'right' ? 'justify-end' : 'justify-start'"
+                type="button"
+                @click="toggleSort(column)"
+              >
+                <span>{{ column.label }}</span>
+                <span class="text-xs">{{ sortKey === column.key ? (sortDirection === "asc" ? "▲" : "▼") : "↕" }}</span>
+              </button>
+              <span v-else>{{ column.label }}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="visibleRows.length === 0" class="border-t border-honey-100">
+            <td class="py-5 text-stone-500" :colspan="columns.length">{{ emptyText }}</td>
+          </tr>
+          <tr v-for="row in visibleRows" :key="keyFor(row)" class="border-t border-honey-100 text-stone-800">
+            <td v-for="column in columns" :key="column.key" class="py-3 pr-3 align-middle" :class="[column.cellClass, column.align === 'right' ? 'text-right' : 'text-left']">
+              <slot :name="`cell-${column.key}`" :row="row" :column="column">
+                {{ column.getFilterValue?.(row) ?? "" }}
+              </slot>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</template>
+
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
@@ -96,48 +141,3 @@ function keyFor(row: unknown) {
   return String((row as Record<string, unknown>)[props.rowKey]);
 }
 </script>
-
-<template>
-  <div class="space-y-4">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <input v-model="filter" class="input max-w-md text-stone-900" type="search" :placeholder="filterPlaceholder" />
-      <p class="text-sm font-bold text-honey-100">
-        Zobrazeno {{ visibleRows.length }} z {{ rows.length }}
-      </p>
-    </div>
-
-    <div class="overflow-x-auto rounded-3xl bg-white/10 p-4">
-      <table class="w-full min-w-[1080px] text-left text-sm">
-        <thead class="text-honey-200">
-          <tr>
-            <th v-for="column in columns" :key="column.key" class="py-3 pr-3" :class="[column.headerClass, column.align === 'right' ? 'text-right' : 'text-left']">
-              <button
-                v-if="column.sortable"
-                class="inline-flex items-center gap-2 font-black transition hover:text-white"
-                :class="column.align === 'right' ? 'justify-end' : 'justify-start'"
-                type="button"
-                @click="toggleSort(column)"
-              >
-                <span>{{ column.label }}</span>
-                <span class="text-xs">{{ sortKey === column.key ? (sortDirection === "asc" ? "▲" : "▼") : "↕" }}</span>
-              </button>
-              <span v-else>{{ column.label }}</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="visibleRows.length === 0" class="border-t border-white/10">
-            <td class="py-5 text-stone-200" :colspan="columns.length">{{ emptyText }}</td>
-          </tr>
-          <tr v-for="row in visibleRows" :key="keyFor(row)" class="border-t border-white/10">
-            <td v-for="column in columns" :key="column.key" class="py-3 pr-3 align-middle" :class="[column.cellClass, column.align === 'right' ? 'text-right' : 'text-left']">
-              <slot :name="`cell-${column.key}`" :row="row" :column="column">
-                {{ column.getFilterValue?.(row) ?? "" }}
-              </slot>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</template>
