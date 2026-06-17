@@ -40,6 +40,7 @@ import { push } from "notivue";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { createProfileOrder, createReservation } from "../api";
+import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { useCheckoutStore } from "../stores/checkout";
 import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
@@ -53,7 +54,11 @@ const loading = ref(false);
 const reservation = reactive({ name: session.customerName, password: "", jarCount: 1 });
 const amount = computed(() => (market.publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount);
 
-onMounted(() => checkout.resetForAnotherReservation());
+onMounted(() => {
+  checkout.resetForAnotherReservation();
+  void market.refresh();
+});
+useAutoRefresh(() => market.refresh(), 15_000);
 
 async function submitReservation() {
   loading.value = true;

@@ -53,6 +53,19 @@ export const useSessionStore = defineStore("session", {
         this.restoring = false;
       }
     },
+    async refreshProfile() {
+      if (!this.sessionToken) {
+        return false;
+      }
+
+      try {
+        this.setProfile(await getCurrentProfile(this.sessionToken));
+        return true;
+      } catch {
+        this.clearSession();
+        return false;
+      }
+    },
     async logout() {
       const token = this.sessionToken;
       this.clearSession();

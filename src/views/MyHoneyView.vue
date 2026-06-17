@@ -65,6 +65,7 @@ import { useRoute, useRouter } from "vue-router";
 import { cancelProfileOrder, updateProfileOrder, type Order, type ProfileOrder } from "../api";
 import AnotherOrderButton from "../components/AnotherOrderButton.vue";
 import PaymentPanel from "../components/PaymentPanel.vue";
+import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useCheckoutStore } from "../stores/checkout";
@@ -233,5 +234,22 @@ function applyRouteName() {
 watch(() => session.profile, syncProfileEditing, { immediate: true });
 watch(() => route.query.name, applyRouteName);
 
-onMounted(applyRouteName);
+async function refreshMyHoney() {
+  await market.refresh();
+
+  if (session.sessionToken) {
+    const restored = await session.refreshProfile();
+
+    if (!restored) {
+      admin.logout();
+      checkout.clearPayment();
+    }
+  }
+}
+
+onMounted(async () => {
+  applyRouteName();
+  await refreshMyHoney().catch((error) => push.error(error instanceof Error ? error.message : "Data se nepodařilo načíst."));
+});
+useAutoRefresh(refreshMyHoney);
 </script>

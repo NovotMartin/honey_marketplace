@@ -58,8 +58,10 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from "vue";
 import { useRouter } from "vue-router";
 import PublicCustomerTable from "../components/PublicCustomerTable.vue";
+import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
 import { formatJarCount, money } from "../utils/format";
@@ -67,6 +69,11 @@ import { formatJarCount, money } from "../utils/format";
 const market = useMarketStore();
 const router = useRouter();
 const session = useSessionStore();
+
+onMounted(() => {
+  void market.refresh();
+});
+useAutoRefresh(() => market.refresh(), 30_000);
 
 function selectCustomer(name: string) {
   if (session.isLoggedIn) {

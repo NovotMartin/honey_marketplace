@@ -87,6 +87,7 @@
 import { push } from "notivue";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { adminResetPassword, adminSendTestEmail, saveAdminSettings, type AdminDashboard, type AdminSettings } from "../api";
+import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useMarketStore } from "../stores/market";
@@ -202,8 +203,9 @@ function valueOrUnset(value: string) {
 watch(() => admin.dashboard, syncDashboard, { immediate: true });
 
 onMounted(async () => {
-  if (session.isAdmin && !admin.dashboard) {
+  if (session.isAdmin) {
     await admin.refresh(session.sessionToken).catch((error) => push.error(error instanceof Error ? error.message : "Administraci se nepodařilo načíst."));
   }
 });
+useAutoRefresh(() => (session.isAdmin ? admin.refresh(session.sessionToken) : undefined), 30_000);
 </script>

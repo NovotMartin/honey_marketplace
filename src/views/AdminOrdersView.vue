@@ -87,6 +87,7 @@ import { push } from "notivue";
 import { computed, onMounted, reactive, watch } from "vue";
 import { adminCancelOrder, adminConfirmOrder, adminCreateOrder, adminDeleteOrder, adminUpdateOrder, type Order, type PublicState } from "../api";
 import DataTable, { type DataTableColumn } from "../components/DataTable.vue";
+import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useMarketStore } from "../stores/market";
@@ -102,6 +103,7 @@ const adminEditingOrders = reactive<Record<string, AdminOrderEdit>>({});
 const adminEditingOrderIds = reactive<Record<string, boolean>>({});
 const adminOrder = reactive({ name: "", jarCount: 1, password: "", confirmed: true });
 const adminOrders = computed(() => admin.dashboard?.orders ?? []);
+const hasOpenInlineEdit = computed(() => Object.values(adminEditingOrderIds).some(Boolean));
 const adminOrderColumns = computed<DataTableColumn[]>(() => [
   { key: "name", label: "Jméno", sortable: true, getSortValue: (row) => asOrder(row).customerName, getFilterValue: (row) => asOrder(row).customerName },
   { key: "jarCount", label: "Množství", align: "right", sortable: true, getSortValue: (row) => asOrder(row).jarCount, getFilterValue: (row) => formatJarCount(asOrder(row).jarCount) },
@@ -281,8 +283,15 @@ function editableOrderAmount(order: Order) {
 watch(() => admin.dashboard?.orders, syncAdminOrderEditing, { immediate: true });
 
 onMounted(async () => {
-  if (session.isAdmin && !admin.dashboard) {
+  if (session.isAdmin) {
     await admin.refresh(session.sessionToken).catch((error) => push.error(error instanceof Error ? error.message : "Objednávky se nepodařilo načíst."));
   }
 });
+useAutoRefresh(() => {
+  if (!session.isAdmin || hasOpenInlineEdit.value) {
+    return;
+  }
+
+  return admin.refresh(session.sessionToken);
+}, 10_000);
 </script>
