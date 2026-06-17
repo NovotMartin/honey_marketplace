@@ -46,6 +46,12 @@ export type PublicState = {
 
 export type ProfileOrder = Order & { payment: Payment | null };
 
+export type SharedPayment = {
+  order: Order;
+  payment: Payment;
+  shareUrl: string;
+};
+
 export type ProfileResponse = {
   customer: { id: string; name: string; isAdmin: boolean };
   orders: ProfileOrder[];
@@ -200,6 +206,18 @@ export function adminCreateOrder(
     headers: bearerHeaders(sessionToken),
     body: JSON.stringify(payload)
   });
+}
+
+export function adminCreatePaymentShare(sessionToken: string, orderId: string) {
+  return request<SharedPayment>(`/api/admin/orders/${orderId}/payment-share`, {
+    method: "POST",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({})
+  });
+}
+
+export function getSharedPayment(orderId: string, token: string) {
+  return request<SharedPayment>(`/api/payments/shared/${encodeURIComponent(orderId)}/${encodeURIComponent(token)}`);
 }
 
 export function adminUpdateOrder(

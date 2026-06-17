@@ -7,7 +7,31 @@
       </p>
     </div>
 
-    <div class="overflow-x-auto rounded-3xl bg-white/75 p-4 ring-1 ring-honey-100">
+    <div class="space-y-3 lg:hidden">
+      <div v-if="visibleRows.length === 0" class="rounded-3xl bg-white/75 p-5 text-stone-500 ring-1 ring-honey-100">{{ emptyText }}</div>
+      <article v-for="row in visibleRows" :key="keyFor(row)" class="rounded-3xl bg-white/75 p-4 text-sm text-stone-800 ring-1 ring-honey-100">
+        <slot v-if="$slots['mobile-row']" name="mobile-row" :row="row" />
+        <template v-else>
+          <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+            <template v-for="column in columns" :key="column.key">
+              <div v-if="column.key !== 'actions'" :class="column.align === 'right' ? 'text-right' : 'text-left'">
+                <p class="text-xs font-black uppercase tracking-wide text-stone-500">{{ column.label }}</p>
+                <div class="mt-1" :class="column.cellClass">
+                  <slot :name="`cell-${column.key}`" :row="row" :column="column" display="mobile">
+                    {{ column.getFilterValue?.(row) ?? "" }}
+                  </slot>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div v-if="columns.some((column) => column.key === 'actions')" class="mt-4 border-t border-honey-100 pt-3">
+            <slot name="cell-actions" :row="row" :column="columns.find((column) => column.key === 'actions')" display="mobile" />
+          </div>
+        </template>
+      </article>
+    </div>
+
+    <div class="hidden overflow-x-auto rounded-3xl bg-white/75 p-4 ring-1 ring-honey-100 lg:block">
       <table class="w-full min-w-[1080px] text-left text-sm">
         <thead class="text-stone-500">
           <tr>
@@ -32,7 +56,7 @@
           </tr>
           <tr v-for="row in visibleRows" :key="keyFor(row)" class="border-t border-honey-100 text-stone-800">
             <td v-for="column in columns" :key="column.key" class="py-3 pr-3 align-middle" :class="[column.cellClass, column.align === 'right' ? 'text-right' : 'text-left']">
-              <slot :name="`cell-${column.key}`" :row="row" :column="column">
+              <slot :name="`cell-${column.key}`" :row="row" :column="column" display="desktop">
                 {{ column.getFilterValue?.(row) ?? "" }}
               </slot>
             </td>

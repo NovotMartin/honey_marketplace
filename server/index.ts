@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import helmet from "helmet";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Prisma, PrismaClient } from "@prisma/client";
@@ -93,6 +94,11 @@ const resetPasswordSchema = z.object({
 
 const testEmailSchema = z.object({
   to: z.string().trim().email("Zadej platnou e-mailovou adresu.").max(254)
+});
+
+const sharedPaymentParamsSchema = z.object({
+  orderId: z.string().min(1),
+  token: z.string().trim().min(1).max(200)
 });
 
 type SettingsEnvOverrides = Partial<
@@ -484,6 +490,30 @@ function verifyAdminActionToken(orderId: string, expires: number, token: string,
   return expectedBuffer.length === tokenBuffer.length && crypto.timingSafeEqual(expectedBuffer, tokenBuffer);
 }
 
+function paymentShareToken(orderId: string, secret: string) {
+  return crypto.createHmac("sha256", secret).update(`payment-share.${orderId}`).digest("hex");
+}
+
+function verifyPaymentShareToken(orderId: string, token: string, secret: string) {
+  const expectedBuffer = Buffer.from(paymentShareToken(orderId, secret), "hex");
+  const tokenBuffer = Buffer.from(token, "hex");
+  return expectedBuffer.length === tokenBuffer.length && crypto.timingSafeEqual(expectedBuffer, tokenBuffer);
+}
+
+function publicBaseUrl(req: Request) {
+  return (optionalEnv("APP_PUBLIC_URL") ?? `${req.protocol}://${req.get("host") ?? "localhost"}`).replace(/\/+$/, "");
+}
+
+function paymentShareUrl(req: Request, orderId: string) {
+  const secret = optionalEnv("ADMIN_ACTION_SECRET");
+
+  if (!secret) {
+    throw new HttpError(400, "Chybí ADMIN_ACTION_SECRET pro veřejné sdílení platby.");
+  }
+
+  return `${publicBaseUrl(req)}/platba/${encodeURIComponent(orderId)}/${paymentShareToken(orderId, secret)}`;
+}
+
 function adminConfirmUrl(orderId: string) {
   const settings = mailSettingsFromEnv();
 
@@ -496,7 +526,7 @@ function adminConfirmUrl(orderId: string) {
   return `${settings.appPublicUrl}/api/admin/orders/${encodeURIComponent(orderId)}/email-confirm?expires=${expires}&token=${token}`;
 }
 
-function adminActionHtmlPage(title: string, message: string) {
+function adminActionHtmlPage(title: string, message: string, action?: { href: string; label: string }) {
   return `<!doctype html>
 <html lang="cs">
   <head>
@@ -508,12 +538,14 @@ function adminActionHtmlPage(title: string, message: string) {
       main { max-width: 42rem; margin: 1rem; padding: 2rem; border-radius: 2rem; background: rgba(255, 255, 255, 0.88); box-shadow: 0 1.5rem 4rem rgba(120, 53, 15, 0.25); }
       h1 { margin: 0 0 1rem; font-size: 2rem; }
       p { margin: 0; font-size: 1.1rem; line-height: 1.6; }
+      a { display: inline-flex; margin-top: 1.5rem; border-radius: 1rem; background: #1c1917; color: white; padding: 0.85rem 1.25rem; font-weight: 800; text-decoration: none; }
     </style>
   </head>
   <body>
     <main>
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(message)}</p>
+      ${action ? `<a href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}
     </main>
   </body>
 </html>`;
@@ -558,13 +590,34 @@ function revolutLinkWithAmount(linkOrText: string, amountCzk: number) {
   }
 }
 
-async function paymentForOrder(
+function paymentBase(
   settings: Awaited<ReturnType<typeof ensureSettings>>,
   order: { id: string; jarCount: number },
   customerName: string
 ) {
   const amountCzk = order.jarCount * settings.pricePerJarCzk;
   const message = safePaymentText(`${settings.paymentMessage || "Med"} - ${customerName} - ${order.id.slice(0, 8)}`);
+  const bankPayload = settings.iban
+    ? [
+        `SPD*1.0`,
+        `ACC:${settings.iban.replace(/\s+/g, "")}${settings.swift ? `+${settings.swift.trim()}` : ""}`,
+        `AM:${amountCzk.toFixed(2)}`,
+        `CC:CZK`,
+        `MSG:${message}`
+      ].join("*")
+    : "";
+  const revolutInputs = [settings.revolutLink, settings.revolutUsername ? `https://revolut.me/${settings.revolutUsername}` : ""];
+  const revolutLink = revolutInputs.map((input) => revolutLinkWithAmount(input, amountCzk)).find(Boolean) ?? "";
+
+  return { amountCzk, message, bankPayload, revolutLink };
+}
+
+async function paymentForOrder(
+  settings: Awaited<ReturnType<typeof ensureSettings>>,
+  order: { id: string; jarCount: number },
+  customerName: string
+) {
+  const { amountCzk, message, bankPayload, revolutLink } = paymentBase(settings, order, customerName);
   const result: {
     amountCzk: number;
     message: string;
@@ -579,23 +632,91 @@ async function paymentForOrder(
     revolutLink: null
   };
 
-  if (settings.iban) {
-    const account = `${settings.iban.replace(/\s+/g, "")}${settings.swift ? `+${settings.swift.trim()}` : ""}`;
-    const payload = [`SPD*1.0`, `ACC:${account}`, `AM:${amountCzk.toFixed(2)}`, `CC:CZK`, `MSG:${message}`].join("*");
-    result.bankQr = await QRCode.toDataURL(payload, { margin: 1, width: 320 });
+  if (bankPayload) {
+    result.bankQr = await QRCode.toDataURL(bankPayload, { margin: 1, width: 320 });
   }
 
-  const revolutInputs = [settings.revolutLink, settings.revolutUsername ? `https://revolut.me/${settings.revolutUsername}` : ""];
-  for (const revolutInput of revolutInputs) {
-    const revolutLink = revolutLinkWithAmount(revolutInput, amountCzk);
-    if (revolutLink) {
-      result.revolutLink = revolutLink;
-      result.revolutQr = await QRCode.toDataURL(revolutLink, { margin: 1, width: 320 });
-      break;
-    }
+  if (revolutLink) {
+    result.revolutLink = revolutLink;
+    result.revolutQr = await QRCode.toDataURL(revolutLink, { margin: 1, width: 320 });
   }
 
   return result;
+}
+
+async function sharedPaymentPayload(order: OrderWithCustomer, req?: Request) {
+  const settings = await ensureSettings(prisma);
+
+  return {
+    order: serializeOrder(order),
+    payment: await paymentForOrder(settings, order, order.customer.name),
+    shareUrl: req ? paymentShareUrl(req, order.id) : undefined
+  };
+}
+
+async function sharedPaymentQrPng(order: OrderWithCustomer) {
+  const settings = await ensureSettings(prisma);
+  const { bankPayload, revolutLink } = paymentBase(settings, order, order.customer.name);
+  const qrText = bankPayload || revolutLink;
+
+  if (!qrText) {
+    throw new HttpError(404, "Pro tuhle objednávku nejsou nastavené platební údaje.");
+  }
+
+  return QRCode.toBuffer(qrText, { margin: 2, width: 900 });
+}
+
+async function sharedPaymentFromParams(orderId: string, token: string) {
+  const secret = optionalEnv("ADMIN_ACTION_SECRET");
+
+  if (!secret || !verifyPaymentShareToken(orderId, token, secret)) {
+    throw new HttpError(404, "Sdílená platba nebyla nalezena.");
+  }
+
+  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
+
+  if (!order) {
+    throw new HttpError(404, "Sdílená platba nebyla nalezena.");
+  }
+
+  return order;
+}
+
+async function sharedPaymentHtml(req: Request, order: OrderWithCustomer) {
+  const settings = await ensureSettings(prisma);
+  const url = paymentShareUrl(req, order.id);
+  const title = `Platba za med - ${order.customer.name}`;
+  const description = `${formatJarCountText(order.jarCount)}, ${formatMoneyText(order.jarCount * settings.pricePerJarCzk)}`;
+  const image = `${url}/og.png`;
+  const meta = `
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="${escapeHtml(title)}" />
+    <meta property="og:description" content="${escapeHtml(description)}" />
+    <meta property="og:image" content="${escapeHtml(image)}" />
+    <meta property="og:url" content="${escapeHtml(url)}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${escapeHtml(title)}" />
+    <meta name="twitter:description" content="${escapeHtml(description)}" />
+    <meta name="twitter:image" content="${escapeHtml(image)}" />`;
+
+  const indexHtml = await fs.readFile(path.join(clientDist, "index.html"), "utf8").catch(() => "");
+
+  if (indexHtml) {
+    return indexHtml.replace("<head>", `<head>${meta}`);
+  }
+
+  return `<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    ${meta}
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>`;
 }
 
 async function sendMail(options: { to: string; subject: string; text: string; html: string }) {
@@ -1121,6 +1242,21 @@ app.post(
   })
 );
 
+app.post(
+  "/api/admin/orders/:orderId/payment-share",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { orderId } = z.object({ orderId: z.string().min(1) }).parse(req.params);
+    const order = await prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
+
+    if (!order) {
+      throw new HttpError(404, "Objednávka nebyla nalezena.");
+    }
+
+    res.json(await sharedPaymentPayload(order, req));
+  })
+);
+
 app.patch(
   "/api/admin/orders/:orderId",
   adminAuth,
@@ -1208,7 +1344,8 @@ app.get(
     res.send(
       adminActionHtmlPage(
         "Objednávka potvrzena",
-        `Objednávka pro ${updated.customer.name} na ${formatJarCountText(updated.jarCount)} je potvrzená.`
+        `Objednávka pro ${updated.customer.name} na ${formatJarCountText(updated.jarCount)} je potvrzená.`,
+        { href: `${mailSettings.appPublicUrl}/objednavky`, label: "Otevřít objednávky" }
       )
     );
   })
@@ -1295,6 +1432,37 @@ app.patch(
     await revokeCustomerSessions(customer.id);
 
     res.json({ customer });
+  })
+);
+
+app.get(
+  "/api/payments/shared/:orderId/:token",
+  asyncRoute(async (req, res) => {
+    const { orderId, token } = sharedPaymentParamsSchema.parse(req.params);
+    const order = await sharedPaymentFromParams(orderId, token);
+    res.json(await sharedPaymentPayload(order, req));
+  })
+);
+
+app.get(
+  ["/api/payments/shared/:orderId/:token/og.png", "/platba/:orderId/:token/og.png"],
+  asyncRoute(async (req, res) => {
+    const { orderId, token } = sharedPaymentParamsSchema.parse(req.params);
+    const order = await sharedPaymentFromParams(orderId, token);
+    const buffer = await sharedPaymentQrPng(order);
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.send(buffer);
+  })
+);
+
+app.get(
+  "/platba/:orderId/:token",
+  asyncRoute(async (req, res) => {
+    const { orderId, token } = sharedPaymentParamsSchema.parse(req.params);
+    const order = await sharedPaymentFromParams(orderId, token);
+    res.send(await sharedPaymentHtml(req, order));
   })
 );
 

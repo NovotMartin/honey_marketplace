@@ -4,6 +4,7 @@ import ReserveView from "./views/ReserveView.vue";
 import MyHoneyView from "./views/MyHoneyView.vue";
 import AdminView from "./views/AdminView.vue";
 import AdminOrdersView from "./views/AdminOrdersView.vue";
+import SharedPaymentView from "./views/SharedPaymentView.vue";
 
 const routes: RouteRecordRaw[] = [
   { path: "/", name: "home", component: HomeView },
@@ -11,6 +12,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/mujmed", name: "my-honey", component: MyHoneyView },
   { path: "/admin", name: "admin", component: AdminView },
   { path: "/objednavky", name: "admin-orders", component: AdminOrdersView },
+  { path: "/platba/:orderId/:token", name: "shared-payment", component: SharedPaymentView },
   { path: "/:pathMatch(.*)*", redirect: "/" }
 ];
 
