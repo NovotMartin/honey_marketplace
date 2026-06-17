@@ -548,6 +548,8 @@ function revolutLinkWithAmount(linkOrText: string, amountCzk: number) {
       return "";
     }
 
+    url.search = "";
+    url.searchParams.set("t", "rq");
     url.searchParams.set("amount", String(amountCzk * 100));
     url.searchParams.set("currency", "CZK");
     return url.toString();
