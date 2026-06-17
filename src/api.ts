@@ -23,10 +23,8 @@ export type Order = {
 
 export type Payment = {
   amountCzk: number;
-  variableSymbol: string;
   message: string;
   bankQr: string | null;
-  bankPayload: string | null;
   revolutQr: string | null;
   revolutLink: string | null;
 };
@@ -43,7 +41,6 @@ export type PublicState = {
   settings: PublicSettings;
   totalReservedJars: number;
   availableJars: number;
-  orders: Order[];
   customers: CustomerSummary[];
 };
 

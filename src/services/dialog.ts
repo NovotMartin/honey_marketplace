@@ -39,23 +39,3 @@ export async function confirmAction({ title, text, confirmText, icon = "question
 export function confirmDanger(options: ConfirmOptions) {
   return confirmAction({ ...options, icon: options.icon ?? "warning", variant: "danger" });
 }
-
-const infoClass = {
-  popup: "honey-dialog",
-  title: "honey-dialog-title",
-  htmlContainer: "honey-dialog-text",
-  confirmButton: "honey-dialog-button honey-dialog-confirm honey-dialog-confirm-success",
-  cancelButton: "honey-dialog-cancel",
-  actions: "honey-dialog-actions"
-};
-
-export async function showInfoDialog(title: string, text: string) {
-  await Swal.fire({
-    title,
-    text,
-    icon: "info",
-    confirmButtonText: "Rozumím",
-    buttonsStyling: false,
-    customClass: infoClass
-  });
-}

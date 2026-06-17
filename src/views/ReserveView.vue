@@ -55,7 +55,7 @@ const reservation = reactive({ name: session.customerName, password: "", jarCoun
 const amount = computed(() => (market.publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount);
 
 onMounted(() => {
-  checkout.resetForAnotherReservation();
+  checkout.clearPayment();
   void market.refresh();
 });
 useAutoRefresh(() => market.refresh(), 15_000);

@@ -567,18 +567,14 @@ async function paymentForOrder(
   const message = safePaymentText(`${settings.paymentMessage || "Med"} - ${customerName} - ${order.id.slice(0, 8)}`);
   const result: {
     amountCzk: number;
-    variableSymbol: string;
     message: string;
     bankQr: string | null;
-    bankPayload: string | null;
     revolutQr: string | null;
     revolutLink: string | null;
   } = {
     amountCzk,
-    variableSymbol: order.id.replace(/\D/g, "").slice(0, 10) || order.id.slice(0, 10),
     message,
     bankQr: null,
-    bankPayload: null,
     revolutQr: null,
     revolutLink: null
   };
@@ -586,7 +582,6 @@ async function paymentForOrder(
   if (settings.iban) {
     const account = `${settings.iban.replace(/\s+/g, "")}${settings.swift ? `+${settings.swift.trim()}` : ""}`;
     const payload = [`SPD*1.0`, `ACC:${account}`, `AM:${amountCzk.toFixed(2)}`, `CC:CZK`, `MSG:${message}`].join("*");
-    result.bankPayload = payload;
     result.bankQr = await QRCode.toDataURL(payload, { margin: 1, width: 320 });
   }
 
@@ -816,7 +811,6 @@ async function publicState() {
     settings: publicSettings(settings),
     totalReservedJars,
     availableJars: Math.max(settings.totalJars - totalReservedJars, 0),
-    orders: orders.map(serializeOrder),
     customers: Array.from(customers.values()).sort((a, b) => b.lastOrderAt.getTime() - a.lastOrderAt.getTime())
   };
 }
@@ -855,10 +849,6 @@ async function customerProfileById(customerId: string) {
   }
 
   return customerProfileForCustomer(customer);
-}
-
-async function customerProfile(name: string, password: string) {
-  return customerProfileForCustomer(await verifyCustomer(name, password));
 }
 
 const adminAuth: RequestHandler = (req, _res, next) => {
@@ -1043,14 +1033,6 @@ app.delete(
       profile: await customerProfileById(customer.id),
       publicState: await publicState()
     });
-  })
-);
-
-app.post(
-  "/api/admin/login",
-  adminAuth,
-  asyncRoute(async (_req, res) => {
-    res.json({ ok: true });
   })
 );
 

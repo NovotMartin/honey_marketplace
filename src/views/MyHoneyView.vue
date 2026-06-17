@@ -198,7 +198,7 @@ function cancelOwnOrderEdit(order: ProfileOrder) {
 }
 
 function startAnotherReservation() {
-  checkout.resetForAnotherReservation();
+  checkout.clearPayment();
   router.push("/chcimed");
 }
 

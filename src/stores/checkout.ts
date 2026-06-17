@@ -28,10 +28,6 @@ export const useCheckoutStore = defineStore("checkout", {
     clearPayment() {
       this.lastPayment = null;
       this.reservationComplete = false;
-    },
-    resetForAnotherReservation() {
-      this.lastPayment = null;
-      this.reservationComplete = false;
     }
   }
 });
