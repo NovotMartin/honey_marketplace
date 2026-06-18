@@ -46,6 +46,8 @@ import UserPasswordActions from "../components/UserPasswordActions.vue";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useSessionStore } from "../stores/session";
+import { copyToClipboard } from "../utils/clipboard";
+import { dateTime } from "../utils/format";
 
 const route = useRoute();
 const router = useRouter();
@@ -165,16 +167,16 @@ async function rejectRequest() {
 }
 
 async function copyLink() {
-  try {
-    await navigator.clipboard.writeText(resetUrl.value);
+  if (await copyToClipboard(resetUrl.value)) {
     push.success("Odkaz je zkopírovaný.");
-  } catch {
-    push.error("Odkaz se nepodařilo zkopírovat.");
+    return;
   }
+
+  push.error("Odkaz se nepodařilo zkopírovat.");
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return dateTime(value);
 }
 
 onMounted(() => {

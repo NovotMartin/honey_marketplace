@@ -43,11 +43,10 @@
 
 <script setup lang="ts">
 import type { CustomerSummary } from "../api";
+import { dateShort } from "../utils/format";
 
 withDefaults(defineProps<{ customers: CustomerSummary[]; selectable?: boolean }>(), { selectable: true });
 defineEmits<{ select: [name: string] }>();
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
+const formatDate = dateShort;
 </script>

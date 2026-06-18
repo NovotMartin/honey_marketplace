@@ -50,13 +50,11 @@
             <UserPasswordActions
               :customer="asCustomer(row)"
               :password="passwordResets[asCustomer(row).id] ?? ''"
-              :reset-url="resetLinks[asCustomer(row).id] ?? ''"
               :loading="loading"
               :show-reset-url="false"
               @update:password="passwordResets[asCustomer(row).id] = $event"
               @reset="resetCustomerPassword"
               @link="createResetLink"
-              @copy="copyResetLink"
             />
           </div>
         </template>
@@ -72,13 +70,11 @@
             class="min-w-[520px]"
             :customer="asCustomer(row)"
             :password="passwordResets[asCustomer(row).id] ?? ''"
-            :reset-url="resetLinks[asCustomer(row).id] ?? ''"
             :loading="loading"
             :show-reset-url="false"
             @update:password="passwordResets[asCustomer(row).id] = $event"
             @reset="resetCustomerPassword"
             @link="createResetLink"
-            @copy="copyResetLink"
           />
         </template>
       </DataTable>
@@ -146,12 +142,11 @@
             <UserPasswordActions
               :customer="requestCustomer(asResetRequest(row))"
               :password="requestPasswords[asResetRequest(row).id] ?? ''"
-              :reset-url="resetLinks[asResetRequest(row).customerId] ?? ''"
               :loading="loading || isExpired(asResetRequest(row))"
+              :show-reset-url="false"
               @update:password="requestPasswords[asResetRequest(row).id] = $event"
               @reset="resetRequestPassword(asResetRequest(row))"
               @link="createRequestResetLink(asResetRequest(row))"
-              @copy="copyRequestResetLink(asResetRequest(row))"
             />
             <button class="btn-secondary w-full" type="button" :disabled="loading" @click="rejectResetRequest(asResetRequest(row))">Odmítnout</button>
           </div>
@@ -165,12 +160,11 @@
             <UserPasswordActions
               :customer="requestCustomer(asResetRequest(row))"
               :password="requestPasswords[asResetRequest(row).id] ?? ''"
-              :reset-url="resetLinks[asResetRequest(row).customerId] ?? ''"
               :loading="loading || isExpired(asResetRequest(row))"
+              :show-reset-url="false"
               @update:password="requestPasswords[asResetRequest(row).id] = $event"
               @reset="resetRequestPassword(asResetRequest(row))"
               @link="createRequestResetLink(asResetRequest(row))"
-              @copy="copyRequestResetLink(asResetRequest(row))"
             />
             <button class="btn-secondary px-4 py-2 text-sm" type="button" :disabled="loading" @click="rejectResetRequest(asResetRequest(row))">Odmítnout</button>
           </div>
@@ -210,6 +204,8 @@ import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useSessionStore } from "../stores/session";
+import { copyToClipboard } from "../utils/clipboard";
+import { dateOnly, dateTime } from "../utils/format";
 
 type Customer = UserPasswordCustomer;
 
@@ -220,7 +216,6 @@ const dataLoading = ref(false);
 const activeTab = ref<"users" | "reset-links" | "requests">("users");
 const passwordResets = reactive<Record<string, string>>({});
 const requestPasswords = reactive<Record<string, string>>({});
-const resetLinks = reactive<Record<string, string>>({});
 const activeResetLinks = ref<PasswordResetLink[]>([]);
 const activeResetRequests = ref<PasswordResetRequest[]>([]);
 const customers = computed(() => admin.dashboard?.customers.filter((customer) => customer.id !== session.profile?.customer.id) ?? []);
@@ -262,7 +257,6 @@ async function resetCustomerPassword(customer: Customer) {
   try {
     await adminResetPassword(session.sessionToken, customer.id, password);
     passwordResets[customer.id] = "";
-    resetLinks[customer.id] = "";
     await loadResetData();
     push.success("Heslo je nastavené.");
   } catch (error) {
@@ -288,9 +282,8 @@ async function createResetLink(customer: Customer) {
 
   try {
     const response = await adminCreatePasswordResetLink(session.sessionToken, customer.id);
-    resetLinks[customer.id] = response.resetUrl;
     await loadResetLinks();
-    const copied = await copyText(response.resetUrl);
+    const copied = await copyToClipboard(response.resetUrl);
     push.success(copied ? "Reset odkaz je vytvořený a zkopírovaný." : "Reset odkaz je vytvořený. Najdeš ho v tabu Reset odkazy.");
   } catch (error) {
     push.error(error instanceof Error ? error.message : "Reset odkaz se nepodařilo vytvořit.");
@@ -315,10 +308,9 @@ async function createRequestResetLink(request: PasswordResetRequest) {
 
   try {
     const response = await adminCreateRequestResetLink(session.sessionToken, request.id);
-    resetLinks[request.customerId] = response.resetUrl;
     await loadResetData();
     activeTab.value = "reset-links";
-    const copied = await copyText(response.resetUrl);
+    const copied = await copyToClipboard(response.resetUrl);
     push.success(copied ? "Reset odkaz je vytvořený a zkopírovaný." : "Reset odkaz je vytvořený. Zkopíruj ho v tabu Reset odkazy.");
   } catch (error) {
     push.error(error instanceof Error ? error.message : "Reset odkaz se nepodařilo vytvořit.");
@@ -344,7 +336,6 @@ async function resetRequestPassword(request: PasswordResetRequest) {
   try {
     await adminSetRequestPassword(session.sessionToken, request.id, password);
     requestPasswords[request.id] = "";
-    resetLinks[request.customerId] = "";
     await loadResetData();
     push.success("Heslo je nastavené.");
   } catch (error) {
@@ -409,9 +400,6 @@ async function loadResetLinks() {
   }
 
   activeResetLinks.value = (await getAdminPasswordResetLinks(session.sessionToken)).links;
-  for (const link of activeResetLinks.value) {
-    resetLinks[link.customerId] ||= link.resetUrl;
-  }
 }
 
 async function loadResetRequests() {
@@ -454,44 +442,13 @@ function setActiveTab(tab: "users" | "reset-links" | "requests") {
   void refreshUsersData();
 }
 
-async function copyResetLink(customer: Customer) {
-  if (await copyText(resetLinks[customer.id] ?? "")) {
-    push.success("Odkaz je zkopírovaný.");
-    return;
-  }
-
-  push.error("Odkaz se nepodařilo zkopírovat.");
-}
-
 async function copyExistingResetLink(link: PasswordResetLink) {
-  if (await copyText(link.resetUrl)) {
+  if (await copyToClipboard(link.resetUrl)) {
     push.success("Odkaz je zkopírovaný.");
     return;
   }
 
   push.error("Odkaz se nepodařilo zkopírovat.");
-}
-
-async function copyRequestResetLink(request: PasswordResetRequest) {
-  if (await copyText(resetLinks[request.customerId] ?? "")) {
-    push.success("Odkaz je zkopírovaný.");
-    return;
-  }
-
-  push.error("Odkaz se nepodařilo zkopírovat.");
-}
-
-async function copyText(value: string) {
-  if (!value) {
-    return false;
-  }
-
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function asCustomer(row: unknown) {
@@ -515,11 +472,11 @@ function isExpired(request: PasswordResetRequest) {
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", year: "numeric" }).format(new Date(value));
+  return dateOnly(value);
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return dateTime(value);
 }
 
 onMounted(async () => {

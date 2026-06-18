@@ -73,7 +73,7 @@ import { useAdminStore } from "../stores/admin";
 import { useCheckoutStore } from "../stores/checkout";
 import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
-import { formatJarCount, money } from "../utils/format";
+import { dateShort, formatJarCount, money } from "../utils/format";
 
 const route = useRoute();
 const router = useRouter();
@@ -221,7 +221,7 @@ function statusClass(status: Order["status"]) {
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return dateShort(value);
 }
 
 function applyRouteName() {

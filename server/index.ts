@@ -1,5 +1,4 @@
 import bcrypt from "bcryptjs";
-import cors from "cors";
 import dotenv from "dotenv";
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import helmet from "helmet";
@@ -358,7 +357,6 @@ app.use(
     }
   })
 );
-app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 async function ensureSettings(db: DbClient) {

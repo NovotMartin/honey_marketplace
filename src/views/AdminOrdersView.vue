@@ -221,7 +221,8 @@ import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
-import { formatJarCount, money } from "../utils/format";
+import { copyToClipboard } from "../utils/clipboard";
+import { dateShort, formatJarCount, money } from "../utils/format";
 
 type AdminOrderEdit = { name: string; jarCount: number; status: Order["status"]; source: Order["source"] };
 
@@ -417,12 +418,12 @@ async function copyAdminPaymentLink() {
     return;
   }
 
-  try {
-    await navigator.clipboard.writeText(sharedPayment.value.shareUrl);
+  if (await copyToClipboard(sharedPayment.value.shareUrl)) {
     push.success("Odkaz je zkopírovaný.");
-  } catch {
-    push.error("Odkaz se nepodařilo zkopírovat.");
+    return;
   }
+
+  push.error("Odkaz se nepodařilo zkopírovat.");
 }
 
 async function shareAdminPayment() {
@@ -474,7 +475,7 @@ function statusClass(status: Order["status"]) {
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return dateShort(value);
 }
 
 function asOrder(row: unknown) {

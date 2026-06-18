@@ -27,11 +27,12 @@ withDefaults(
   defineProps<{
     customer: UserPasswordCustomer;
     password: string;
-    resetUrl: string;
+    resetUrl?: string;
     loading: boolean;
     showResetUrl?: boolean;
   }>(),
   {
+    resetUrl: "",
     showResetUrl: true
   }
 );

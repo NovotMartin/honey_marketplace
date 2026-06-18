@@ -45,6 +45,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
 import { getPasswordReset, submitPasswordReset, type PasswordResetInfo } from "../api";
 import PasswordInput from "../components/PasswordInput.vue";
+import { dateTime } from "../utils/format";
 
 const route = useRoute();
 const resetInfo = ref<PasswordResetInfo | null>(null);
@@ -104,7 +105,7 @@ async function submitReset() {
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("cs-CZ", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return dateTime(value);
 }
 
 onMounted(() => void loadReset());
