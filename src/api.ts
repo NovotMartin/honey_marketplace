@@ -305,6 +305,14 @@ export function adminCreatePasswordResetLink(sessionToken: string, customerId: s
   });
 }
 
+export function adminDeleteCustomer(sessionToken: string, customerId: string) {
+  return request<{ ok: true; cancelledOrders: number; publicState: PublicState }>(`/api/admin/customers/${customerId}`, {
+    method: "DELETE",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({})
+  });
+}
+
 export function getPasswordResetRequestCustomers() {
   return request<{ customers: Array<{ id: string; name: string }> }>("/api/password-reset-requests/customers");
 }

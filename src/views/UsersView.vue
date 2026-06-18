@@ -56,6 +56,7 @@
               @reset="resetCustomerPassword"
               @link="createResetLink"
             />
+            <button class="btn-secondary w-full border-red-200 text-red-700 hover:bg-red-50" type="button" :disabled="loading" @click="deleteCustomer(asCustomer(row))">Smazat uživatele</button>
           </div>
         </template>
 
@@ -66,16 +67,20 @@
         <template #cell-createdAt="{ row }">{{ formatDate(asCustomer(row).createdAt) }}</template>
 
         <template #cell-actions="{ row }">
-          <UserPasswordActions
-            class="min-w-[520px]"
-            :customer="asCustomer(row)"
-            :password="passwordResets[asCustomer(row).id] ?? ''"
-            :loading="loading"
-            :show-reset-url="false"
-            @update:password="passwordResets[asCustomer(row).id] = $event"
-            @reset="resetCustomerPassword"
-            @link="createResetLink"
-          />
+          <div class="min-w-[520px] space-y-2">
+            <UserPasswordActions
+              :customer="asCustomer(row)"
+              :password="passwordResets[asCustomer(row).id] ?? ''"
+              :loading="loading"
+              :show-reset-url="false"
+              @update:password="passwordResets[asCustomer(row).id] = $event"
+              @reset="resetCustomerPassword"
+              @link="createResetLink"
+            />
+            <div class="flex justify-end">
+              <button class="btn-secondary border-red-200 px-4 py-2 text-sm text-red-700 hover:bg-red-50" type="button" :disabled="loading" @click="deleteCustomer(asCustomer(row))">Smazat uživatele</button>
+            </div>
+          </div>
         </template>
       </DataTable>
 
@@ -188,6 +193,7 @@ import { push } from "notivue";
 import { computed, onMounted, reactive, ref } from "vue";
 import {
   adminCreatePasswordResetLink,
+  adminDeleteCustomer,
   adminCreateRequestResetLink,
   adminInvalidatePasswordResetLink,
   adminRejectPasswordResetRequest,
@@ -203,6 +209,7 @@ import UserPasswordActions, { type UserPasswordCustomer } from "../components/Us
 import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
+import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
 import { copyToClipboard } from "../utils/clipboard";
 import { dateOnly, dateTime } from "../utils/format";
@@ -210,6 +217,7 @@ import { dateOnly, dateTime } from "../utils/format";
 type Customer = UserPasswordCustomer;
 
 const admin = useAdminStore();
+const market = useMarketStore();
 const session = useSessionStore();
 const loading = ref(false);
 const dataLoading = ref(false);
@@ -287,6 +295,32 @@ async function createResetLink(customer: Customer) {
     push.success(copied ? "Reset odkaz je vytvořený a zkopírovaný." : "Reset odkaz je vytvořený. Najdeš ho v tabu Reset odkazy.");
   } catch (error) {
     push.error(error instanceof Error ? error.message : "Reset odkaz se nepodařilo vytvořit.");
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function deleteCustomer(customer: Customer) {
+  const confirmed = await confirmDanger({
+    title: "Smazat uživatele?",
+    text: `Uživatel ${customer.name} se skryje ze seznamu, odhlásí se ze všech zařízení a jeho čekající objednávky se zruší. Potvrzené objednávky zůstanou v historii.`,
+    confirmText: "Ano, smazat"
+  });
+
+  if (!confirmed) {
+    return;
+  }
+
+  loading.value = true;
+
+  try {
+    const response = await adminDeleteCustomer(session.sessionToken, customer.id);
+    market.setPublicState(response.publicState);
+    delete passwordResets[customer.id];
+    await refreshUsersData();
+    push.success(response.cancelledOrders > 0 ? `Uživatel je smazaný, zrušeno objednávek: ${response.cancelledOrders}.` : "Uživatel je smazaný.");
+  } catch (error) {
+    push.error(error instanceof Error ? error.message : "Uživatele se nepodařilo smazat.");
   } finally {
     loading.value = false;
   }

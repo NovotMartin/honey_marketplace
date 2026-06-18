@@ -41,6 +41,7 @@ model Customer {
   name         String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+  deletedAt    DateTime?
   orders       Order[]
   sessions     CustomerSession[]
   resetTokens  PasswordResetToken[]
