@@ -10,7 +10,16 @@
       </div>
     </div>
 
-    <form class="panel self-start" novalidate @submit.prevent="submitReservation">
+    <div v-if="isSoldOut" class="panel self-start text-center">
+      <p class="section-kicker">Chci med</p>
+      <h2 class="section-title">Med je vyprodaný</h2>
+      <p class="mt-4 text-stone-700">
+        Všechny sklenice jsou teď zamluvené. Mrkni později, jestli se nějaká objednávka neuvolní.
+      </p>
+      <RouterLink class="btn-secondary mt-6 inline-flex" to="/">Zpět na přehled</RouterLink>
+    </div>
+
+    <form v-else class="panel self-start" novalidate @submit.prevent="submitReservation">
       <p class="section-kicker">Chci med</p>
       <h2 class="section-title">Rezervace</h2>
       <label class="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
@@ -63,6 +72,7 @@ const submitAttempted = ref(false);
 const serverPasswordError = ref("");
 const reservation = reactive({ name: session.customerName, password: "", jarCount: 1, website: "", formStartedAt: Date.now() });
 const amount = computed(() => (market.publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount);
+const isSoldOut = computed(() => Boolean(market.publicState) && !market.canReserve);
 const validationErrors = computed(() => {
   const errors: Partial<Record<"jarCount" | "name" | "password", string>> = {};
   const jarCount = Number(reservation.jarCount);

@@ -7,6 +7,7 @@ declare module "lucide-vue-next" {
   export const EyeOff: Component;
   export const Globe: Component;
   export const GlobeOff: Component;
+  export const PackagePlus: Component;
   export const Pencil: Component;
   export const Save: Component;
   export const Trash2: Component;

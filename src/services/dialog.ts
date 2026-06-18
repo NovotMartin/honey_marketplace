@@ -39,3 +39,36 @@ export async function confirmAction({ title, text, confirmText, icon = "question
 export function confirmDanger(options: ConfirmOptions) {
   return confirmAction({ ...options, icon: options.icon ?? "warning", variant: "danger" });
 }
+
+export async function promptPositiveInteger({ title, text, confirmText }: Pick<ConfirmOptions, "title" | "text" | "confirmText">) {
+  const result = await Swal.fire({
+    title,
+    text,
+    icon: "question",
+    input: "number",
+    inputAttributes: { min: "1", step: "1" },
+    inputPlaceholder: "Počet sklenic",
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: "Nechat být",
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: customClass("success"),
+    inputValidator: (value) => {
+      const amount = Number(value);
+
+      if (!Number.isInteger(amount) || amount < 1) {
+        return "Zadej kladné celé číslo.";
+      }
+
+      return undefined;
+    }
+  });
+
+  if (!result.isConfirmed) {
+    return null;
+  }
+
+  return Number(result.value);
+}

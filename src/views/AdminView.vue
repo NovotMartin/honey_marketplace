@@ -19,7 +19,14 @@
         <form class="admin-card" @submit.prevent="submitSettings">
           <h3 class="admin-title">Nastavení prodeje</h3>
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="admin-field">Celkem medu<input v-model.number="settingsForm.totalJars" class="input text-stone-900" type="number" min="0" /></label>
+            <label class="admin-field">Celkem medu
+              <span class="flex gap-2">
+                <input v-model.number="settingsForm.totalJars" class="input text-stone-900" type="number" min="0" />
+                <button v-tooltip="'Doskladnit'" class="btn-secondary px-4" type="button" :disabled="loading" aria-label="Doskladnit" title="Doskladnit" @click="restockHoney">
+                  <PackagePlus class="h-5 w-5" aria-hidden="true" />
+                </button>
+              </span>
+            </label>
             <label class="admin-field">Cena za kus CZK<input v-model.number="settingsForm.pricePerJarCzk" class="input text-stone-900" type="number" min="0" /></label>
             <label class="admin-field sm:col-span-2">IBAN<input v-model="settingsForm.iban" class="input text-stone-900" /></label>
             <label class="admin-field">SWIFT / BIC<input v-model="settingsForm.swift" class="input text-stone-900" /></label>
@@ -27,7 +34,9 @@
             <label class="admin-field sm:col-span-2">Revolut.me odkaz<input v-model="settingsForm.revolutLink" class="input text-stone-900" placeholder="https://revolut.me/..." /></label>
             <label class="admin-field sm:col-span-2">Zpráva k platbě<input v-model="settingsForm.paymentMessage" class="input text-stone-900" /></label>
           </div>
-          <button class="btn-save mt-4" type="submit" :disabled="loading">Uložit nastavení</button>
+          <div class="mt-4 flex flex-wrap gap-3">
+            <button class="btn-save" type="submit" :disabled="loading">Uložit nastavení</button>
+          </div>
         </form>
 
         <div class="admin-card">
@@ -73,9 +82,11 @@
 
 <script setup lang="ts">
 import { push } from "notivue";
+import { PackagePlus } from "lucide-vue-next";
 import { onMounted, reactive, ref, watch } from "vue";
-import { adminSendTestEmail, saveAdminSettings, type AdminDashboard, type AdminSettings } from "../api";
+import { adminRestockHoney, adminSendTestEmail, saveAdminSettings, type AdminDashboard, type AdminSettings } from "../api";
 import { useAutoRefresh } from "../composables/useAutoRefresh";
+import { promptPositiveInteger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
@@ -124,6 +135,32 @@ async function submitSettings() {
     push.success("Nastavení je uložené.");
   } catch (error) {
     push.error(error instanceof Error ? error.message : "Nastavení se nepodařilo uložit.");
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function restockHoney() {
+  const amount = await promptPositiveInteger({
+    title: "Doskladnit med",
+    text: "Kolik sklenic chceš přičíst k aktuálnímu množství?",
+    confirmText: "Doskladnit"
+  });
+
+  if (!amount) {
+    return;
+  }
+
+  loading.value = true;
+
+  try {
+    const response = await adminRestockHoney(session.sessionToken, amount);
+    market.setPublicState(response.publicState);
+    await admin.refresh(session.sessionToken);
+    syncDashboard(admin.dashboard);
+    push.success(`Doskladněno ${amount} sklenic medu.`);
+  } catch (error) {
+    push.error(error instanceof Error ? error.message : "Med se nepodařilo doskladnit.");
   } finally {
     loading.value = false;
   }

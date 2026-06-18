@@ -202,6 +202,14 @@ export function saveAdminSettings(sessionToken: string, payload: Omit<AdminSetti
   });
 }
 
+export function adminRestockHoney(sessionToken: string, amount: number) {
+  return request<{ settings: AdminSettings; publicState: PublicState }>("/api/admin/settings/restock", {
+    method: "POST",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({ amount })
+  });
+}
+
 export function adminSendTestEmail(sessionToken: string, to: string) {
   return request<{ ok: true; message: string; mailSettings: MailSettings }>("/api/admin/email/test", {
     method: "POST",

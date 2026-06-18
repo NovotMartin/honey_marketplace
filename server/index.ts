@@ -116,6 +116,10 @@ const settingsSchema = z.object({
   paymentMessage: z.string().trim().max(140).optional().default("Platba za med")
 });
 
+const restockSchema = z.object({
+  amount: z.coerce.number().int().min(1).max(100000)
+});
+
 const adminOrderSchema = z.object({
   name: textInput(2, 80),
   jarCount: jarCountInput,
@@ -1280,6 +1284,21 @@ app.patch(
       where: { id: settingsId },
       update: input,
       create: { id: settingsId, ...input }
+    });
+
+    res.json({ settings, publicState: await publicState() });
+  })
+);
+
+app.post(
+  "/api/admin/settings/restock",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const input = restockSchema.parse(req.body);
+    const current = await ensureSettings(prisma);
+    const settings = await prisma.settings.update({
+      where: { id: settingsId },
+      data: { totalJars: current.totalJars + input.amount }
     });
 
     res.json({ settings, publicState: await publicState() });
