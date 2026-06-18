@@ -18,6 +18,12 @@ enum OrderSource {
   ADMIN
 }
 
+enum PasswordResetRequestStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+}
+
 model Settings {
   id              Int      @id @default(1)
   totalJars       Int      @default(100)
@@ -38,6 +44,7 @@ model Customer {
   orders       Order[]
   sessions     CustomerSession[]
   resetTokens  PasswordResetToken[]
+  resetRequests PasswordResetRequest[]
 }
 
 model CustomerSession {
@@ -56,15 +63,34 @@ model CustomerSession {
 model PasswordResetToken {
   id         String    @id @default(cuid())
   customerId String
+  requestId  String?
   tokenHash  String    @unique
   createdAt  DateTime  @default(now())
   expiresAt  DateTime
   usedAt     DateTime?
   customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  request    PasswordResetRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
+  @@index([requestId])
   @@index([expiresAt])
   @@index([usedAt])
+}
+
+model PasswordResetRequest {
+  id         String                     @id @default(cuid())
+  customerId String
+  tokenHash  String                     @unique
+  status     PasswordResetRequestStatus @default(PENDING)
+  createdAt  DateTime                   @default(now())
+  expiresAt  DateTime
+  resolvedAt DateTime?
+  customer   Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  resetTokens PasswordResetToken[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([expiresAt])
 }
 
 model Order {

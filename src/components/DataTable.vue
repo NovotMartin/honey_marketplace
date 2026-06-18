@@ -2,9 +2,14 @@
   <div class="space-y-4">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <input v-model="filter" class="input max-w-md text-stone-900" type="search" :placeholder="filterPlaceholder" />
-      <p class="text-sm font-bold text-stone-600">
-        Zobrazeno {{ visibleRows.length }} z {{ rows.length }}
-      </p>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <p class="text-sm font-bold text-stone-600">
+          Zobrazeno {{ visibleRows.length }} z {{ rows.length }}
+        </p>
+        <button v-if="showRefresh" class="btn-secondary px-3 py-1.5 text-xs" type="button" :disabled="refreshing" @click="emit('refresh')">
+          {{ refreshing ? "Obnovuji..." : refreshLabel }}
+        </button>
+      </div>
     </div>
 
     <div class="space-y-3 lg:hidden">
@@ -88,12 +93,22 @@ const props = withDefaults(
     rowKey: string | ((row: unknown) => string);
     emptyText?: string;
     filterPlaceholder?: string;
+    showRefresh?: boolean;
+    refreshing?: boolean;
+    refreshLabel?: string;
   }>(),
   {
     emptyText: "Žádná data.",
-    filterPlaceholder: "Filtrovat..."
+    filterPlaceholder: "Filtrovat...",
+    showRefresh: false,
+    refreshing: false,
+    refreshLabel: "Obnovit"
   }
 );
+
+const emit = defineEmits<{
+  refresh: [];
+}>();
 
 const filter = ref("");
 const sortKey = ref(props.columns.find((column) => column.sortable)?.key ?? "");

@@ -14,6 +14,7 @@
         <PasswordInput ref="profilePasswordInput" v-model="loginForm.password" placeholder="Heslo" autocomplete="current-password" required />
         <button class="btn-secondary" type="submit" :disabled="loading">Odemknout</button>
       </form>
+      <RouterLink v-if="!session.isLoggedIn" class="mt-3 inline-flex text-sm font-black text-honey-700 underline" to="/zapomenute-heslo">Zapomněl jsem svoje přihlášení</RouterLink>
       <p v-if="!session.isLoggedIn && session.lastCustomerName" class="mt-2 text-sm text-stone-500">Poslední použitý profil: {{ session.lastCustomerName }}</p>
 
       <PaymentPanel v-if="checkout.lastPayment" class="mt-6" :payment="checkout.lastPayment" @another="startAnotherReservation" @clear="checkout.clearPayment" />

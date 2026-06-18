@@ -14,7 +14,10 @@
           :aria-label="item.title"
           :title="item.title"
         >
-          {{ item.label }}
+          <span class="inline-flex items-center justify-center gap-1.5">
+            <span>{{ item.label }}</span>
+            <span v-if="item.badge" class="min-w-5 rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-black leading-none text-white shadow-sm">{{ item.badge }}</span>
+          </span>
         </RouterLink>
       </div>
 
@@ -38,6 +41,10 @@ import { useSessionStore } from "../stores/session";
 const admin = useAdminStore();
 const checkout = useCheckoutStore();
 const session = useSessionStore();
+const pendingOrders = computed(() => admin.dashboard?.totals.pendingOrders ?? 0);
+const activeResetLinks = computed(() => admin.dashboard?.totals.activePasswordResetLinks ?? 0);
+const pendingResetRequests = computed(() => admin.dashboard?.totals.pendingPasswordResetRequests ?? 0);
+const userAdminBadge = computed(() => activeResetLinks.value + pendingResetRequests.value);
 const items = computed(() => [
   { path: "/", label: "Domů", title: "Domů" },
   { path: "/chcimed", label: "Chci med", title: "Chci med" },
@@ -45,8 +52,8 @@ const items = computed(() => [
   ...(session.isAdmin
     ? [
         { path: "/admin", label: "⚙️", title: "Admin" },
-        { path: "/objednavky", label: "Objednávky", title: "Objednávky" },
-        { path: "/uzivatele", label: "Uživatelé", title: "Uživatelé" }
+        { path: "/objednavky", label: "Objednávky", title: "Objednávky", badge: pendingOrders.value },
+        { path: "/uzivatele", label: "Uživatelé", title: "Uživatelé", badge: userAdminBadge.value }
       ]
     : [])
 ]);

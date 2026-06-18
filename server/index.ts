@@ -21,7 +21,8 @@ type DbClient = PrismaClient | Prisma.TransactionClient;
 type OrderWithCustomer = Prisma.OrderGetPayload<{ include: { customer: true } }>;
 type CustomerWithOrders = Prisma.CustomerGetPayload<{ include: { orders: true } }>;
 type CustomerSessionRecord = { id: string; customerId: string; tokenHash: string; createdAt: Date; lastUsedAt: Date; revokedAt: Date | null };
-type PasswordResetTokenRecord = { id: string; customerId: string; tokenHash: string; createdAt: Date; expiresAt: Date; usedAt: Date | null };
+type PasswordResetTokenRecord = { id: string; customerId: string; requestId: string | null; tokenHash: string; createdAt: Date; expiresAt: Date; usedAt: Date | null };
+type PasswordResetRequestRecord = { id: string; customerId: string; tokenHash: string; status: "PENDING" | "RESOLVED" | "REJECTED"; createdAt: Date; expiresAt: Date; resolvedAt: Date | null };
 type CustomerSessionDelegate = {
   create(options: { data: { customerId: string; tokenHash: string; lastUsedAt?: Date } }): Promise<CustomerSessionRecord>;
   findUnique(options: {
@@ -32,17 +33,31 @@ type CustomerSessionDelegate = {
   updateMany(options: { where: { customerId?: string; tokenHash?: string; revokedAt?: null }; data: { revokedAt?: Date; lastUsedAt?: Date } }): Promise<unknown>;
 };
 type PasswordResetTokenDelegate = {
-  create(options: { data: { customerId: string; tokenHash: string; expiresAt: Date } }): Promise<PasswordResetTokenRecord>;
+  create(options: { data: { id?: string; customerId: string; requestId?: string; tokenHash: string; expiresAt: Date } }): Promise<PasswordResetTokenRecord>;
   findUnique(options: {
-    where: { tokenHash: string };
+    where: { id?: string; tokenHash?: string };
     include?: { customer?: { select?: { id?: true; name?: true } } };
   }): Promise<(PasswordResetTokenRecord & { customer: { id: string; name: string } }) | null>;
   findMany(options: {
     where: { usedAt?: null; expiresAt?: { gt: Date } };
+    include?: { customer?: { select?: { id?: true; name?: true } }; request?: { select?: { id?: true } } };
+    orderBy?: { createdAt: "desc" };
+  }): Promise<Array<PasswordResetTokenRecord & { customer: { id: string; name: string }; request?: { id: string } | null }>>;
+  updateMany(options: { where: { id?: string; customerId?: string; tokenHash?: string; usedAt?: null }; data: { usedAt: Date } }): Promise<unknown>;
+};
+type PasswordResetRequestDelegate = {
+  create(options: { data: { customerId: string; tokenHash: string; expiresAt: Date } }): Promise<PasswordResetRequestRecord>;
+  findUnique(options: {
+    where: { id?: string; tokenHash?: string };
+    include?: { customer?: { select?: { id?: true; name?: true } } };
+  }): Promise<(PasswordResetRequestRecord & { customer: { id: string; name: string } }) | null>;
+  findMany(options: {
+    where?: { status?: "PENDING" | "RESOLVED" | "REJECTED"; customerId?: string };
     include?: { customer?: { select?: { id?: true; name?: true } } };
     orderBy?: { createdAt: "desc" };
-  }): Promise<Array<PasswordResetTokenRecord & { customer: { id: string; name: string } }>>;
-  updateMany(options: { where: { id?: string; customerId?: string; tokenHash?: string; usedAt?: null }; data: { usedAt: Date } }): Promise<unknown>;
+  }): Promise<Array<PasswordResetRequestRecord & { customer: { id: string; name: string } }>>;
+  update(options: { where: { id: string }; data: Partial<Pick<PasswordResetRequestRecord, "status" | "resolvedAt">> }): Promise<PasswordResetRequestRecord>;
+  updateMany(options: { where: { customerId?: string; status?: "PENDING" | "RESOLVED" | "REJECTED" }; data: Partial<Pick<PasswordResetRequestRecord, "status" | "resolvedAt">> }): Promise<unknown>;
 };
 type MailTransport = { sendMail(options: { from: string; to: string; subject: string; text: string; html: string }): Promise<unknown> };
 type NodemailerModule = {
@@ -75,8 +90,11 @@ function clientIp(req: Request) {
 }
 
 function assertRateLimit(req: Request, bucket: string, limit: number, windowMs: number, message: string) {
+  assertRateLimitKey(`${bucket}:${clientIp(req)}`, limit, windowMs, message);
+}
+
+function assertRateLimitKey(key: string, limit: number, windowMs: number, message: string) {
   const now = Date.now();
-  const key = `${bucket}:${clientIp(req)}`;
   const current = rateLimits.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -138,7 +156,17 @@ const resetPasswordSchema = z.object({
   password: passwordInput
 });
 
-const passwordResetTokenSchema = z.object({
+const passwordResetLinkParamsSchema = z.object({
+  linkId: z.string().trim().min(1),
+  token: z.string().trim().min(20).max(300)
+});
+
+const passwordResetRequestSchema = z.object({
+  customerId: z.string().trim().min(1)
+});
+
+const passwordResetRequestParamsSchema = z.object({
+  requestId: z.string().trim().min(1),
   token: z.string().trim().min(20).max(300)
 });
 
@@ -411,11 +439,35 @@ function passwordResetTokens(db: DbClient) {
   return (db as unknown as { passwordResetToken: PasswordResetTokenDelegate }).passwordResetToken;
 }
 
+function passwordResetRequests(db: DbClient) {
+  return (db as unknown as { passwordResetRequest: PasswordResetRequestDelegate }).passwordResetRequest;
+}
+
 function sessionTokenHash(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
 function passwordResetTokenHash(token: string) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function passwordResetLinkToken(linkId: string) {
+  const secret = optionalEnv("ADMIN_ACTION_SECRET");
+
+  if (!secret) {
+    throw new HttpError(400, "Chybí ADMIN_ACTION_SECRET pro reset odkazy.");
+  }
+
+  return crypto.createHmac("sha256", secret).update(`password-reset.${linkId}`).digest("hex");
+}
+
+function verifyPasswordResetLinkToken(linkId: string, token: string) {
+  const expectedBuffer = Buffer.from(passwordResetLinkToken(linkId), "hex");
+  const tokenBuffer = Buffer.from(token, "hex");
+  return expectedBuffer.length === tokenBuffer.length && crypto.timingSafeEqual(expectedBuffer, tokenBuffer);
+}
+
+function passwordResetRequestTokenHash(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
@@ -459,21 +511,32 @@ async function revokePasswordResetTokens(customerId: string, usedAt = new Date()
   await passwordResetTokens(prisma).updateMany({ where: { customerId, usedAt: null }, data: { usedAt } });
 }
 
-async function createPasswordResetLink(req: Request, customerId: string) {
-  const token = crypto.randomBytes(32).toString("base64url");
+async function createPasswordResetLink(req: Request, customerId: string, requestId?: string) {
+  const linkId = crypto.randomUUID();
+  const token = passwordResetLinkToken(linkId);
   await passwordResetTokens(prisma).create({
     data: {
+      id: linkId,
       customerId,
+      ...(requestId ? { requestId } : {}),
       tokenHash: passwordResetTokenHash(token),
       expiresAt: new Date(Date.now() + 24 * 60 * 60_000)
     }
   });
-  return `${publicBaseUrl(req)}/reset-hesla/${encodeURIComponent(token)}`;
+  return passwordResetUrl(req, linkId);
 }
 
-async function validPasswordResetToken(token: string) {
+function passwordResetUrl(req: Request, linkId: string) {
+  return `${publicBaseUrl(req)}/reset-hesla/${encodeURIComponent(linkId)}/${passwordResetLinkToken(linkId)}`;
+}
+
+async function validPasswordResetToken(linkId: string, token: string) {
+  if (!verifyPasswordResetLinkToken(linkId, token)) {
+    throw new HttpError(404, "Odkaz není platný nebo už vypršel.");
+  }
+
   const resetToken = await passwordResetTokens(prisma).findUnique({
-    where: { tokenHash: passwordResetTokenHash(token) },
+    where: { id: linkId },
     include: { customer: { select: { id: true, name: true } } }
   });
 
@@ -482,6 +545,52 @@ async function validPasswordResetToken(token: string) {
   }
 
   return resetToken;
+}
+
+function serializePasswordResetRequest(request: PasswordResetRequestRecord & { customer: { id: string; name: string } }) {
+  return {
+    id: request.id,
+    customerId: request.customer.id,
+    customerName: request.customer.name,
+    status: request.status,
+    createdAt: request.createdAt,
+    expiresAt: request.expiresAt,
+    resolvedAt: request.resolvedAt
+  };
+}
+
+async function createPasswordResetRequest(req: Request, customerId: string) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const request = await passwordResetRequests(prisma).create({
+    data: {
+      customerId,
+      tokenHash: passwordResetRequestTokenHash(token),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60_000)
+    }
+  });
+
+  return { request, url: `${publicBaseUrl(req)}/reset-zadost/${encodeURIComponent(request.id)}/${encodeURIComponent(token)}` };
+}
+
+async function validPasswordResetRequest(requestId: string, token?: string) {
+  const request = await passwordResetRequests(prisma).findUnique({
+    where: { id: requestId },
+    include: { customer: { select: { id: true, name: true } } }
+  });
+
+  if (!request || request.status !== "PENDING" || request.expiresAt.getTime() <= Date.now()) {
+    throw new HttpError(404, "Žádost není platná nebo už vypršela.");
+  }
+
+  if (token && request.tokenHash !== passwordResetRequestTokenHash(token)) {
+    throw new HttpError(404, "Žádost není platná nebo už vypršela.");
+  }
+
+  return request;
+}
+
+async function resolvePasswordResetRequest(requestId: string) {
+  await passwordResetRequests(prisma).update({ where: { id: requestId }, data: { status: "RESOLVED", resolvedAt: new Date() } });
 }
 
 async function getOrCreateCustomerForUser(db: DbClient, name: string, password: string) {
@@ -985,6 +1094,40 @@ async function sendTestEmail(to: string) {
   await sendMail({ to, subject, text, html });
 }
 
+async function sendPasswordResetRequestEmail(request: PasswordResetRequestRecord & { customer: { id: string; name: string } }, requestUrl: string) {
+  const mailSettings = mailSettingsFromEnv();
+
+  if (!mailSettings.enabled) {
+    console.warn(`E-mail notifikace není nastavená. Chybí: ${mailSettings.missing.join(", ")}.`);
+    return;
+  }
+
+  const subject = `Žádost o reset hesla: ${request.customer.name}`;
+  const text = [
+    "Nová žádost o reset hesla",
+    `Uživatel: ${request.customer.name}`,
+    `Vytvořeno: ${formatDateText(request.createdAt)}`,
+    `Platí do: ${formatDateText(request.expiresAt)}`,
+    `Vyřešit žádost: ${requestUrl}`
+  ].join("\n");
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #1c1917; line-height: 1.5;">
+      <h1 style="margin: 0 0 16px;">Nová žádost o reset hesla</h1>
+      <p><strong>Uživatel:</strong> ${escapeHtml(request.customer.name)}</p>
+      <p><strong>Vytvořeno:</strong> ${escapeHtml(formatDateText(request.createdAt))}</p>
+      <p><strong>Platí do:</strong> ${escapeHtml(formatDateText(request.expiresAt))}</p>
+      <p style="margin: 24px 0;">
+        <a href="${escapeHtml(requestUrl)}" style="display: inline-block; border-radius: 999px; background: #059669; color: #ffffff; font-weight: 800; padding: 14px 22px; text-decoration: none;">Vyřešit žádost</a>
+      </p>
+    </div>`;
+
+  try {
+    await sendMail({ to: mailSettings.adminEmail, subject, text, html });
+  } catch (error) {
+    console.error("Nepodařilo se odeslat e-mailovou žádost o reset hesla.", error);
+  }
+}
+
 async function publicState() {
   const settings = await ensureSettings(prisma);
   const orders = await prisma.order.findMany({
@@ -1261,6 +1404,16 @@ app.get(
       orderBy: { createdAt: "desc" }
     });
     const activeJars = await activeJarCount(prisma);
+    const pendingResetRequests = (await passwordResetRequests(prisma).findMany({
+      where: { status: "PENDING" },
+      include: { customer: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "desc" }
+    })).filter((request) => request.expiresAt.getTime() > Date.now());
+    const activeResetLinks = await passwordResetTokens(prisma).findMany({
+      where: { usedAt: null, expiresAt: { gt: new Date() } },
+      include: { customer: { select: { id: true, name: true } }, request: { select: { id: true } } },
+      orderBy: { createdAt: "desc" }
+    });
 
     res.json({
       settings,
@@ -1269,7 +1422,10 @@ app.get(
       customers: await prisma.customer.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, createdAt: true } }),
       totals: {
         activeJars,
-        availableJars: Math.max(settings.totalJars - activeJars, 0)
+        availableJars: Math.max(settings.totalJars - activeJars, 0),
+        pendingOrders: orders.filter((order) => order.status === "PENDING").length,
+        activePasswordResetLinks: activeResetLinks.length,
+        pendingPasswordResetRequests: pendingResetRequests.length
       }
     });
   })
@@ -1540,6 +1696,7 @@ app.patch(
     });
     await revokeCustomerSessions(customer.id);
     await revokePasswordResetTokens(customer.id);
+    await passwordResetRequests(prisma).updateMany({ where: { customerId: customer.id, status: "PENDING" }, data: { status: "RESOLVED", resolvedAt: new Date() } });
 
     res.json({ customer });
   })
@@ -1567,10 +1724,10 @@ app.post(
 app.get(
   "/api/admin/password-reset-links",
   adminAuth,
-  asyncRoute(async (_req, res) => {
+  asyncRoute(async (req, res) => {
     const links = await passwordResetTokens(prisma).findMany({
       where: { usedAt: null, expiresAt: { gt: new Date() } },
-      include: { customer: { select: { id: true, name: true } } },
+      include: { customer: { select: { id: true, name: true } }, request: { select: { id: true } } },
       orderBy: { createdAt: "desc" }
     });
 
@@ -1579,10 +1736,79 @@ app.get(
         id: link.id,
         customerId: link.customer.id,
         customerName: link.customer.name,
+        requestId: link.request?.id ?? null,
+        resetUrl: passwordResetUrl(req, link.id),
         createdAt: link.createdAt,
         expiresAt: link.expiresAt
       }))
     });
+  })
+);
+
+app.get(
+  "/api/admin/password-reset-requests",
+  adminAuth,
+  asyncRoute(async (_req, res) => {
+    const requests = await passwordResetRequests(prisma).findMany({
+      where: { status: "PENDING" },
+      include: { customer: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "desc" }
+    });
+
+    res.json({ requests: requests.filter((request) => request.expiresAt.getTime() > Date.now()).map(serializePasswordResetRequest) });
+  })
+);
+
+app.get(
+  "/api/admin/password-reset-requests/:requestId/:token",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { requestId, token } = passwordResetRequestParamsSchema.parse(req.params);
+    res.json({ request: serializePasswordResetRequest(await validPasswordResetRequest(requestId, token)) });
+  })
+);
+
+app.post(
+  "/api/admin/password-reset-requests/:requestId/reset-link",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { requestId } = z.object({ requestId: z.string().min(1) }).parse(req.params);
+    const request = await validPasswordResetRequest(requestId);
+    const resetUrl = await createPasswordResetLink(req, request.customerId, request.id);
+    await resolvePasswordResetRequest(request.id);
+
+    res.json({ customer: request.customer, resetUrl, expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString() });
+  })
+);
+
+app.patch(
+  "/api/admin/password-reset-requests/:requestId/password",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { requestId } = z.object({ requestId: z.string().min(1) }).parse(req.params);
+    const input = resetPasswordSchema.parse(req.body);
+    const request = await validPasswordResetRequest(requestId);
+    const resolvedAt = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.customer.update({ where: { id: request.customerId }, data: { passwordHash: await bcrypt.hash(input.password, 12) } });
+      await passwordResetTokens(tx).updateMany({ where: { customerId: request.customerId, usedAt: null }, data: { usedAt: resolvedAt } });
+      await customerSessions(tx).updateMany({ where: { customerId: request.customerId, revokedAt: null }, data: { revokedAt: resolvedAt } });
+      await passwordResetRequests(tx).update({ where: { id: request.id }, data: { status: "RESOLVED", resolvedAt } });
+    });
+
+    res.json({ customer: request.customer });
+  })
+);
+
+app.patch(
+  "/api/admin/password-reset-requests/:requestId/reject",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { requestId } = z.object({ requestId: z.string().min(1) }).parse(req.params);
+    await validPasswordResetRequest(requestId);
+    await passwordResetRequests(prisma).update({ where: { id: requestId }, data: { status: "REJECTED", resolvedAt: new Date() } });
+    res.json({ ok: true });
   })
 );
 
@@ -1597,20 +1823,66 @@ app.delete(
 );
 
 app.get(
-  "/api/password-reset/:token",
+  "/api/password-reset-requests/customers",
+  asyncRoute(async (_req, res) => {
+    const customers = await prisma.customer.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    res.json({ customers: customers.filter((customer) => !isAdminName(customer.name)) });
+  })
+);
+
+app.post(
+  "/api/password-reset-requests",
   asyncRoute(async (req, res) => {
-    const { token } = passwordResetTokenSchema.parse(req.params);
-    const resetToken = await validPasswordResetToken(token);
+    const input = passwordResetRequestSchema.parse(req.body);
+    assertRateLimit(req, "password-reset-request-ip", 3, 30 * 60_000, "Příliš mnoho žádostí o reset hesla. Zkus to prosím později.");
+    assertRateLimitKey(`password-reset-request-customer:${input.customerId}`, 1, 10 * 60_000, "Pro tenhle účet už žádost čeká. Zkus to prosím za chvíli.");
+
+    const customer = await prisma.customer.findUnique({ where: { id: input.customerId }, select: { id: true, name: true } });
+
+    if (!customer || isAdminName(customer.name)) {
+      throw new HttpError(404, "Uživatel nebyl nalezen.");
+    }
+
+    const pending = await passwordResetRequests(prisma).findMany({
+      where: { customerId: customer.id, status: "PENDING" },
+      include: { customer: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "desc" }
+    });
+    const activePending = pending.find((request) => request.expiresAt.getTime() > Date.now());
+
+    if (activePending) {
+      throw new HttpError(429, "Pro tenhle účet už žádost čeká. Zkus to prosím za chvíli.");
+    }
+
+    const created = await createPasswordResetRequest(req, customer.id);
+    const request = await passwordResetRequests(prisma).findUnique({
+      where: { id: created.request.id },
+      include: { customer: { select: { id: true, name: true } } }
+    });
+
+    if (request) {
+      await sendPasswordResetRequestEmail(request, created.url);
+    }
+
+    res.json({ ok: true, message: "Žádost o reset hesla byla předaná adminovi." });
+  })
+);
+
+app.get(
+  "/api/password-reset/:linkId/:token",
+  asyncRoute(async (req, res) => {
+    const { linkId, token } = passwordResetLinkParamsSchema.parse(req.params);
+    const resetToken = await validPasswordResetToken(linkId, token);
     res.json({ customer: resetToken.customer, expiresAt: resetToken.expiresAt.toISOString() });
   })
 );
 
 app.post(
-  "/api/password-reset/:token",
+  "/api/password-reset/:linkId/:token",
   asyncRoute(async (req, res) => {
-    const { token } = passwordResetTokenSchema.parse(req.params);
+    const { linkId, token } = passwordResetLinkParamsSchema.parse(req.params);
     const input = resetPasswordSchema.parse(req.body);
-    const resetToken = await validPasswordResetToken(token);
+    const resetToken = await validPasswordResetToken(linkId, token);
     const usedAt = new Date();
 
     await prisma.$transaction(async (tx) => {

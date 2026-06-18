@@ -93,7 +93,7 @@ export type AdminDashboard = {
   mailSettings: MailSettings;
   orders: Order[];
   customers: Array<{ id: string; name: string; createdAt: string }>;
-  totals: { activeJars: number; availableJars: number };
+  totals: { activeJars: number; availableJars: number; pendingOrders: number; activePasswordResetLinks: number; pendingPasswordResetRequests: number };
 };
 
 export type PasswordResetInfo = {
@@ -105,8 +105,20 @@ export type PasswordResetLink = {
   id: string;
   customerId: string;
   customerName: string;
+  requestId: string | null;
+  resetUrl: string;
   createdAt: string;
   expiresAt: string;
+};
+
+export type PasswordResetRequest = {
+  id: string;
+  customerId: string;
+  customerName: string;
+  status: "PENDING" | "RESOLVED" | "REJECTED";
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt: string | null;
 };
 
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
@@ -293,9 +305,56 @@ export function adminCreatePasswordResetLink(sessionToken: string, customerId: s
   });
 }
 
+export function getPasswordResetRequestCustomers() {
+  return request<{ customers: Array<{ id: string; name: string }> }>("/api/password-reset-requests/customers");
+}
+
+export function createPasswordResetRequest(customerId: string) {
+  return request<{ ok: true; message: string }>("/api/password-reset-requests", {
+    method: "POST",
+    body: JSON.stringify({ customerId })
+  });
+}
+
 export function getAdminPasswordResetLinks(sessionToken: string) {
   return request<{ links: PasswordResetLink[] }>("/api/admin/password-reset-links", {
     headers: bearerHeaders(sessionToken)
+  });
+}
+
+export function getAdminPasswordResetRequests(sessionToken: string) {
+  return request<{ requests: PasswordResetRequest[] }>("/api/admin/password-reset-requests", {
+    headers: bearerHeaders(sessionToken)
+  });
+}
+
+export function getAdminPasswordResetRequest(sessionToken: string, requestId: string, token: string) {
+  return request<{ request: PasswordResetRequest }>(`/api/admin/password-reset-requests/${encodeURIComponent(requestId)}/${encodeURIComponent(token)}`, {
+    headers: bearerHeaders(sessionToken)
+  });
+}
+
+export function adminCreateRequestResetLink(sessionToken: string, requestId: string) {
+  return request<PasswordResetInfo & { resetUrl: string }>(`/api/admin/password-reset-requests/${requestId}/reset-link`, {
+    method: "POST",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({})
+  });
+}
+
+export function adminSetRequestPassword(sessionToken: string, requestId: string, password: string) {
+  return request<{ customer: { id: string; name: string } }>(`/api/admin/password-reset-requests/${requestId}/password`, {
+    method: "PATCH",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({ password })
+  });
+}
+
+export function adminRejectPasswordResetRequest(sessionToken: string, requestId: string) {
+  return request<{ ok: true }>(`/api/admin/password-reset-requests/${requestId}/reject`, {
+    method: "PATCH",
+    headers: bearerHeaders(sessionToken),
+    body: JSON.stringify({})
   });
 }
 
@@ -307,12 +366,12 @@ export function adminInvalidatePasswordResetLink(sessionToken: string, id: strin
   });
 }
 
-export function getPasswordReset(token: string) {
-  return request<PasswordResetInfo>(`/api/password-reset/${encodeURIComponent(token)}`);
+export function getPasswordReset(linkId: string, token: string) {
+  return request<PasswordResetInfo>(`/api/password-reset/${encodeURIComponent(linkId)}/${encodeURIComponent(token)}`);
 }
 
-export function submitPasswordReset(token: string, password: string) {
-  return request<{ ok: true }>(`/api/password-reset/${encodeURIComponent(token)}`, {
+export function submitPasswordReset(linkId: string, token: string, password: string) {
+  return request<{ ok: true }>(`/api/password-reset/${encodeURIComponent(linkId)}/${encodeURIComponent(token)}`, {
     method: "POST",
     body: JSON.stringify({ password })
   });

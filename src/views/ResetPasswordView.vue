@@ -61,12 +61,17 @@ function tokenParam() {
   return Array.isArray(token) ? token[0] ?? "" : token ?? "";
 }
 
+function linkIdParam() {
+  const linkId = route.params.linkId;
+  return Array.isArray(linkId) ? linkId[0] ?? "" : linkId ?? "";
+}
+
 async function loadReset() {
   loading.value = true;
   error.value = "";
 
   try {
-    resetInfo.value = await getPasswordReset(tokenParam());
+    resetInfo.value = await getPasswordReset(linkIdParam(), tokenParam());
   } catch (loadError) {
     resetInfo.value = null;
     error.value = loadError instanceof Error ? loadError.message : "Odkaz není platný nebo už vypršel.";
@@ -84,7 +89,7 @@ async function submitReset() {
   submitting.value = true;
 
   try {
-    await submitPasswordReset(tokenParam(), form.password);
+    await submitPasswordReset(linkIdParam(), tokenParam(), form.password);
     done.value = true;
     resetInfo.value = null;
     form.password = "";

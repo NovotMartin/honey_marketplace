@@ -58,7 +58,17 @@
         <p class="mt-3 text-sm text-stone-500">Odkaz je veřejný a má náhled s QR pro WhatsApp, Teams a podobné aplikace.</p>
       </div>
 
-      <DataTable class="mt-6" :rows="adminOrders" :columns="adminOrderColumns" :row-key="(row) => asOrder(row).id" empty-text="Žádné objednávky." filter-placeholder="Filtrovat podle jména, stavu, zdroje, data nebo částky...">
+      <DataTable
+        class="mt-6"
+        :rows="adminOrders"
+        :columns="adminOrderColumns"
+        :row-key="(row) => asOrder(row).id"
+        empty-text="Žádné objednávky."
+        filter-placeholder="Filtrovat podle jména, stavu, zdroje, data nebo částky..."
+        show-refresh
+        :refreshing="dataLoading"
+        @refresh="refreshOrdersData(true)"
+      >
         <template #mobile-row="{ row }">
           <div v-if="adminEditingOrderIds[asOrder(row).id]" class="space-y-3">
             <div class="grid grid-cols-[1fr_4.5rem_auto] items-center gap-2">
@@ -222,6 +232,7 @@ const adminEditingOrders = reactive<Record<string, AdminOrderEdit>>({});
 const adminEditingOrderIds = reactive<Record<string, boolean>>({});
 const adminOrder = reactive({ name: "", jarCount: 1, password: "", confirmed: true });
 const sharedPayment = ref<SharedPayment | null>(null);
+const dataLoading = ref(false);
 const adminOrders = computed(() => admin.dashboard?.orders ?? []);
 const hasOpenInlineEdit = computed(() => Object.values(adminEditingOrderIds).some(Boolean));
 const adminOrderColumns = computed<DataTableColumn[]>(() => [
@@ -253,6 +264,34 @@ async function refreshAdminAndPublic(publicState?: PublicState) {
 
   await admin.refresh(session.sessionToken);
   syncAdminOrderEditing();
+}
+
+async function refreshOrdersData(showToast = false) {
+  if (!session.isAdmin) {
+    return;
+  }
+
+  if (hasOpenInlineEdit.value) {
+    if (showToast) {
+      push.info("Nejdřív dokonči nebo zahoď úpravu objednávky.");
+    }
+    return;
+  }
+
+  dataLoading.value = true;
+
+  try {
+    await admin.refresh(session.sessionToken);
+    syncAdminOrderEditing();
+
+    if (showToast) {
+      push.success("Data jsou obnovená.");
+    }
+  } catch (error) {
+    push.error(error instanceof Error ? error.message : "Objednávky se nepodařilo načíst.");
+  } finally {
+    dataLoading.value = false;
+  }
 }
 
 async function submitAdminOrder() {
@@ -454,14 +493,8 @@ watch(() => admin.dashboard?.orders, syncAdminOrderEditing, { immediate: true })
 
 onMounted(async () => {
   if (session.isAdmin) {
-    await admin.refresh(session.sessionToken).catch((error) => push.error(error instanceof Error ? error.message : "Objednávky se nepodařilo načíst."));
+    await refreshOrdersData();
   }
 });
-useAutoRefresh(() => {
-  if (!session.isAdmin || hasOpenInlineEdit.value) {
-    return;
-  }
-
-  return admin.refresh(session.sessionToken);
-}, 10_000);
+useAutoRefresh(() => refreshOrdersData(), 10_000);
 </script>

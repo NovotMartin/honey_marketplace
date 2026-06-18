@@ -7,6 +7,8 @@ import AdminOrdersView from "./views/AdminOrdersView.vue";
 import SharedPaymentView from "./views/SharedPaymentView.vue";
 import UsersView from "./views/UsersView.vue";
 import ResetPasswordView from "./views/ResetPasswordView.vue";
+import ForgotPasswordView from "./views/ForgotPasswordView.vue";
+import ResetRequestView from "./views/ResetRequestView.vue";
 
 const routes: RouteRecordRaw[] = [
   { path: "/", name: "home", component: HomeView },
@@ -16,7 +18,9 @@ const routes: RouteRecordRaw[] = [
   { path: "/objednavky", name: "admin-orders", component: AdminOrdersView },
   { path: "/uzivatele", name: "users", component: UsersView },
   { path: "/platba/:orderId/:token", name: "shared-payment", component: SharedPaymentView },
-  { path: "/reset-hesla/:token", name: "reset-password", component: ResetPasswordView },
+  { path: "/zapomenute-heslo", name: "forgot-password", component: ForgotPasswordView },
+  { path: "/reset-zadost/:requestId/:token", name: "reset-request", component: ResetRequestView },
+  { path: "/reset-hesla/:linkId/:token", name: "reset-password", component: ResetPasswordView },
   { path: "/:pathMatch(.*)*", redirect: "/" }
 ];
 
