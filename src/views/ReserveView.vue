@@ -1,31 +1,39 @@
 <template>
-  <section class="relative z-10 mx-auto grid max-w-7xl gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8 lg:py-10">
-    <div class="panel self-start">
-      <p class="section-kicker">Rychlá rezervace</p>
-      <h1 class="section-title">Kolik sklenic medu chceš?</h1>
-      <div class="mt-6 grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-        <div class="stat-card"><span>Volné</span><strong>{{ formatJarCount(market.availableJars) }}</strong></div>
-        <div class="stat-card"><span>Cena za kus</span><strong>{{ money(market.publicState?.settings.pricePerJarCzk ?? 0) }}</strong></div>
-        <div class="stat-card"><span>Rezervováno</span><strong>{{ formatJarCount(market.publicState?.totalReservedJars ?? 0) }}</strong></div>
-      </div>
-    </div>
-
+  <section class="relative z-10 mx-auto grid max-w-7xl gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[1.1fr_0.9fr] lg:px-8 lg:py-10">
     <div v-if="isSoldOut" class="panel self-start text-center">
       <p class="section-kicker">Chci med</p>
       <h2 class="section-title">Med je vyprodaný</h2>
       <p class="mt-4 text-stone-700">
-        Všechny sklenice jsou teď zamluvené. Mrkni později, jestli se nějaká objednávka neuvolní.
+        Všechny sklenice jsou teď zamluvené. Mrkni později, jestli se nějaká rezervace neuvolní.
       </p>
       <RouterLink class="btn-secondary mt-6 inline-flex" to="/">Zpět na přehled</RouterLink>
     </div>
 
     <form v-else class="panel self-start" novalidate @submit.prevent="submitReservation">
       <p class="section-kicker">Chci med</p>
-      <h2 class="section-title">Rezervace</h2>
+      <h2 class="section-title">Rezervovat med</h2>
+      <p v-if="!session.isLoggedIn" class="mt-3 text-stone-700">
+        Vyber počet sklenic, doplň jméno a po rezervaci ti ukážeme QR platbu v Můj med.
+      </p>
       <label class="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
         Web
         <input v-model="reservation.website" autocomplete="off" tabindex="-1" />
       </label>
+
+      <p class="field-label">Rychlá volba</p>
+      <div class="mt-2 grid grid-cols-5 gap-2">
+        <button
+          v-for="choice in quickChoices"
+          :key="choice"
+          class="rounded-2xl px-3 py-2 font-black shadow-sm ring-1 transition disabled:cursor-not-allowed disabled:opacity-40"
+          :class="reservation.jarCount === choice ? 'bg-stone-950 text-white ring-stone-950' : 'bg-honey-100 text-honey-800 ring-honey-200 hover:bg-honey-200'"
+          type="button"
+          :disabled="choice > market.availableJars"
+          @click="reservation.jarCount = choice"
+        >
+          {{ choice }}
+        </button>
+      </div>
 
       <label class="field-label" for="reserve-count">Počet sklenic</label>
       <input id="reserve-count" v-model.number="reservation.jarCount" class="input" type="number" min="1" :max="Math.max(market.availableJars, 1)" :aria-invalid="Boolean(visibleErrors.jarCount)" aria-describedby="reserve-count-error" />
@@ -48,6 +56,16 @@
         {{ loading ? "Ukládám..." : checkout.reservationComplete ? "Rezervace vytvořená" : "Rezervovat a zobrazit QR" }}
       </button>
     </form>
+
+    <div class="panel self-start">
+      <p class="section-kicker">Přehled</p>
+      <h1 class="section-title">Kolik medu zbývá</h1>
+      <div class="mt-6 grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+        <div class="stat-card"><span>Volné sklenice</span><strong>{{ formatJarCount(market.availableJars) }}</strong></div>
+        <div class="stat-card"><span>Cena za sklenici</span><strong>{{ money(market.publicState?.settings.pricePerJarCzk ?? 0) }}</strong></div>
+        <div class="stat-card"><span>Už zamluveno</span><strong>{{ formatJarCount(market.publicState?.totalReservedJars ?? 0) }}</strong></div>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -71,6 +89,7 @@ const loading = ref(false);
 const submitAttempted = ref(false);
 const serverPasswordError = ref("");
 const reservation = reactive({ name: session.customerName, password: "", jarCount: 1, website: "", formStartedAt: Date.now() });
+const quickChoices = [1, 2, 3, 4, 5];
 const amount = computed(() => (market.publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount);
 const isSoldOut = computed(() => Boolean(market.publicState) && !market.canReserve);
 const validationErrors = computed(() => {
