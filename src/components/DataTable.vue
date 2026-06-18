@@ -96,13 +96,17 @@ const props = withDefaults(
     showRefresh?: boolean;
     refreshing?: boolean;
     refreshLabel?: string;
+    defaultSortKey?: string;
+    defaultSortDirection?: "asc" | "desc";
   }>(),
   {
     emptyText: "Žádná data.",
     filterPlaceholder: "Filtrovat...",
     showRefresh: false,
     refreshing: false,
-    refreshLabel: "Obnovit"
+    refreshLabel: "Obnovit",
+    defaultSortKey: "",
+    defaultSortDirection: "asc"
   }
 );
 
@@ -111,8 +115,8 @@ const emit = defineEmits<{
 }>();
 
 const filter = ref("");
-const sortKey = ref(props.columns.find((column) => column.sortable)?.key ?? "");
-const sortDirection = ref<"asc" | "desc">("asc");
+const sortKey = ref(props.defaultSortKey || props.columns.find((column) => column.sortable)?.key || "");
+const sortDirection = ref<"asc" | "desc">(props.defaultSortDirection);
 
 const activeSortColumn = computed(() => props.columns.find((column) => column.key === sortKey.value));
 

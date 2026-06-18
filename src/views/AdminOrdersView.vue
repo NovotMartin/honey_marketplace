@@ -65,6 +65,8 @@
         :row-key="(row) => asOrder(row).id"
         empty-text="Žádné objednávky."
         filter-placeholder="Filtrovat podle jména, stavu, zdroje, data nebo částky..."
+        default-sort-key="createdAt"
+        default-sort-direction="desc"
         show-refresh
         :refreshing="dataLoading"
         @refresh="refreshOrdersData(true)"
