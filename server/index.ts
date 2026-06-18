@@ -51,6 +51,32 @@ const asyncRoute = (handler: RequestHandler): RequestHandler => {
   };
 };
 
+type RateLimitBucket = { count: number; resetAt: number };
+
+const rateLimits = new Map<string, RateLimitBucket>();
+
+function clientIp(req: Request) {
+  const forwardedFor = req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwardedFor || req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function assertRateLimit(req: Request, bucket: string, limit: number, windowMs: number, message: string) {
+  const now = Date.now();
+  const key = `${bucket}:${clientIp(req)}`;
+  const current = rateLimits.get(key);
+
+  if (!current || current.resetAt <= now) {
+    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return;
+  }
+
+  current.count += 1;
+
+  if (current.count > limit) {
+    throw new HttpError(429, message);
+  }
+}
+
 const textInput = (min = 1, max = 120) => z.string().trim().min(min).max(max);
 const passwordInput = z.string().min(4, "Heslo musí mít alespoň 4 znaky.").max(120);
 const jarCountInput = z.coerce.number().int().min(1).max(10000);
@@ -61,7 +87,9 @@ const credentialsSchema = z.object({
 });
 
 const reservationSchema = credentialsSchema.extend({
-  jarCount: jarCountInput
+  jarCount: jarCountInput,
+  website: z.string().trim().max(200).optional().default(""),
+  formStartedAt: z.coerce.number().int()
 });
 
 const settingsSchema = z.object({
@@ -249,6 +277,22 @@ function settingsOverridesFromEnv(): SettingsEnvOverrides {
   }
 
   return overrides;
+}
+
+function assertHumanReservation(input: z.infer<typeof reservationSchema>) {
+  if (input.website) {
+    throw new HttpError(400, "Rezervace se nepovedla.");
+  }
+
+  const ageMs = Date.now() - input.formStartedAt;
+
+  if (ageMs < 2_000) {
+    throw new HttpError(400, "Formulář byl odeslán příliš rychle. Zkus to prosím znovu.");
+  }
+
+  if (ageMs > 86_400_000 || ageMs < 0) {
+    throw new HttpError(400, "Formulář je zastaralý. Obnov stránku a zkus to prosím znovu.");
+  }
 }
 
 app.use(
@@ -982,7 +1026,9 @@ app.get(
 app.post(
   "/api/reservations",
   asyncRoute(async (req, res) => {
+    assertRateLimit(req, "reservation", 5, 10 * 60_000, "Příliš mnoho rezervací z jedné adresy. Zkus to prosím později.");
     const input = reservationSchema.parse(req.body);
+    assertHumanReservation(input);
 
     const result = await prisma.$transaction(async (tx) => {
       const customer = await getOrCreateCustomerForUser(tx, input.name, input.password);
@@ -1016,6 +1062,7 @@ app.post(
 app.post(
   "/api/login",
   asyncRoute(async (req, res) => {
+    assertRateLimit(req, "login", 10, 10 * 60_000, "Příliš mnoho pokusů o přihlášení. Zkus to za pár minut.");
     const input = credentialsSchema.parse(req.body);
     const customer = await verifyCustomer(input.name, input.password);
     res.json({ ...(await customerProfileForCustomer(customer)), sessionToken: await createCustomerSession(prisma, customer.id) });

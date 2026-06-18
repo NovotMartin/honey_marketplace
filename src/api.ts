@@ -119,7 +119,7 @@ export function getPublicState() {
   return request<PublicState>("/api/public");
 }
 
-export function createReservation(payload: { name: string; password: string; jarCount: number }) {
+export function createReservation(payload: { name: string; password: string; jarCount: number; website?: string; formStartedAt: number }) {
   return request<{ order: Order; payment: Payment; profile: ProfileResponse; sessionToken: string; publicState: PublicState }>("/api/reservations", {
     method: "POST",
     body: JSON.stringify(payload)

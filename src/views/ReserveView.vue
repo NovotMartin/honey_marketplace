@@ -13,6 +13,10 @@
     <form class="panel self-start" @submit.prevent="submitReservation">
       <p class="section-kicker">Chci med</p>
       <h2 class="section-title">Rezervace</h2>
+      <label class="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+        Web
+        <input v-model="reservation.website" autocomplete="off" tabindex="-1" />
+      </label>
 
       <label class="field-label" for="reserve-count">Počet sklenic</label>
       <input id="reserve-count" v-model.number="reservation.jarCount" class="input" type="number" min="1" :max="Math.max(market.availableJars, 1)" required />
@@ -51,14 +55,20 @@ const market = useMarketStore();
 const session = useSessionStore();
 const checkout = useCheckoutStore();
 const loading = ref(false);
-const reservation = reactive({ name: session.customerName, password: "", jarCount: 1 });
+const reservation = reactive({ name: session.customerName, password: "", jarCount: 1, website: "", formStartedAt: Date.now() });
 const amount = computed(() => (market.publicState?.settings.pricePerJarCzk ?? 0) * reservation.jarCount);
 
 onMounted(() => {
   checkout.clearPayment();
+  resetReservationProtection();
   void market.refresh();
 });
 useAutoRefresh(() => market.refresh(), 15_000);
+
+function resetReservationProtection() {
+  reservation.website = "";
+  reservation.formStartedAt = Date.now();
+}
 
 async function submitReservation() {
   loading.value = true;
@@ -77,6 +87,7 @@ async function submitReservation() {
     }
 
     reservation.jarCount = 1;
+    resetReservationProtection();
     push.success("Rezervace je uložená. QR platba je připravená v Můj med.");
     await router.push("/mujmed");
   } catch (error) {
