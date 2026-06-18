@@ -42,7 +42,13 @@ const items = computed(() => [
   { path: "/", label: "Domů", title: "Domů" },
   { path: "/chcimed", label: "Chci med", title: "Chci med" },
   { path: "/mujmed", label: "Můj med", title: "Můj med" },
-  ...(session.isAdmin ? [{ path: "/admin", label: "⚙️", title: "Admin" }, { path: "/objednavky", label: "Objednávky", title: "Objednávky" }] : [])
+  ...(session.isAdmin
+    ? [
+        { path: "/admin", label: "⚙️", title: "Admin" },
+        { path: "/objednavky", label: "Objednávky", title: "Objednávky" },
+        { path: "/uzivatele", label: "Uživatelé", title: "Uživatelé" }
+      ]
+    : [])
 ]);
 
 async function logoutCustomer() {

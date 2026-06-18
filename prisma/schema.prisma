@@ -37,6 +37,7 @@ model Customer {
   createdAt    DateTime @default(now())
   orders       Order[]
   sessions     CustomerSession[]
+  resetTokens  PasswordResetToken[]
 }
 
 model CustomerSession {
@@ -50,6 +51,20 @@ model CustomerSession {
 
   @@index([customerId])
   @@index([revokedAt])
+}
+
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  customerId String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  usedAt     DateTime?
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([expiresAt])
+  @@index([usedAt])
 }
 
 model Order {

@@ -11,7 +11,7 @@
 
       <form v-if="!session.isLoggedIn" class="mt-5 grid gap-3 sm:grid-cols-[1fr_1fr_auto]" @submit.prevent="submitLogin">
         <input v-model="loginForm.name" class="input" placeholder="Jméno" autocomplete="name" required />
-        <input ref="profilePasswordInput" v-model="loginForm.password" class="input" type="password" placeholder="Heslo" autocomplete="current-password" required />
+        <PasswordInput ref="profilePasswordInput" v-model="loginForm.password" placeholder="Heslo" autocomplete="current-password" required />
         <button class="btn-secondary" type="submit" :disabled="loading">Odemknout</button>
       </form>
       <p v-if="!session.isLoggedIn && session.lastCustomerName" class="mt-2 text-sm text-stone-500">Poslední použitý profil: {{ session.lastCustomerName }}</p>
@@ -65,6 +65,7 @@ import { useRoute, useRouter } from "vue-router";
 import { cancelProfileOrder, updateProfileOrder, type Order, type ProfileOrder } from "../api";
 import AnotherOrderButton from "../components/AnotherOrderButton.vue";
 import PaymentPanel from "../components/PaymentPanel.vue";
+import PasswordInput from "../components/PasswordInput.vue";
 import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
@@ -80,7 +81,7 @@ const session = useSessionStore();
 const market = useMarketStore();
 const checkout = useCheckoutStore();
 const loading = ref(false);
-const profilePasswordInput = ref<HTMLInputElement | null>(null);
+const profilePasswordInput = ref<{ focus: () => void } | null>(null);
 const loginForm = reactive({ name: session.lastCustomerName, password: "" });
 const editingOrders = reactive<Record<string, number>>({});
 const editingOrderIds = reactive<Record<string, boolean>>({});

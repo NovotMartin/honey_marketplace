@@ -21,6 +21,7 @@ type DbClient = PrismaClient | Prisma.TransactionClient;
 type OrderWithCustomer = Prisma.OrderGetPayload<{ include: { customer: true } }>;
 type CustomerWithOrders = Prisma.CustomerGetPayload<{ include: { orders: true } }>;
 type CustomerSessionRecord = { id: string; customerId: string; tokenHash: string; createdAt: Date; lastUsedAt: Date; revokedAt: Date | null };
+type PasswordResetTokenRecord = { id: string; customerId: string; tokenHash: string; createdAt: Date; expiresAt: Date; usedAt: Date | null };
 type CustomerSessionDelegate = {
   create(options: { data: { customerId: string; tokenHash: string; lastUsedAt?: Date } }): Promise<CustomerSessionRecord>;
   findUnique(options: {
@@ -29,6 +30,19 @@ type CustomerSessionDelegate = {
   }): Promise<(CustomerSessionRecord & { customer: CustomerWithOrders }) | null>;
   update(options: { where: { id: string }; data: Partial<Pick<CustomerSessionRecord, "lastUsedAt" | "revokedAt">> }): Promise<CustomerSessionRecord>;
   updateMany(options: { where: { customerId?: string; tokenHash?: string; revokedAt?: null }; data: { revokedAt?: Date; lastUsedAt?: Date } }): Promise<unknown>;
+};
+type PasswordResetTokenDelegate = {
+  create(options: { data: { customerId: string; tokenHash: string; expiresAt: Date } }): Promise<PasswordResetTokenRecord>;
+  findUnique(options: {
+    where: { tokenHash: string };
+    include?: { customer?: { select?: { id?: true; name?: true } } };
+  }): Promise<(PasswordResetTokenRecord & { customer: { id: string; name: string } }) | null>;
+  findMany(options: {
+    where: { usedAt?: null; expiresAt?: { gt: Date } };
+    include?: { customer?: { select?: { id?: true; name?: true } } };
+    orderBy?: { createdAt: "desc" };
+  }): Promise<Array<PasswordResetTokenRecord & { customer: { id: string; name: string } }>>;
+  updateMany(options: { where: { id?: string; customerId?: string; tokenHash?: string; usedAt?: null }; data: { usedAt: Date } }): Promise<unknown>;
 };
 type MailTransport = { sendMail(options: { from: string; to: string; subject: string; text: string; html: string }): Promise<unknown> };
 type NodemailerModule = {
@@ -78,7 +92,7 @@ function assertRateLimit(req: Request, bucket: string, limit: number, windowMs: 
 }
 
 const textInput = (min = 1, max = 120) => z.string().trim().min(min).max(max);
-const passwordInput = z.string().min(4, "Heslo musí mít alespoň 4 znaky.").max(120);
+const passwordInput = z.string().min(1, "Heslo nesmí být prázdné.");
 const jarCountInput = z.coerce.number().int().min(1).max(10000);
 
 const credentialsSchema = z.object({
@@ -105,7 +119,7 @@ const settingsSchema = z.object({
 const adminOrderSchema = z.object({
   name: textInput(2, 80),
   jarCount: jarCountInput,
-  password: z.string().max(120).optional(),
+  password: z.string().optional(),
   confirmed: z.boolean().optional().default(true)
 });
 
@@ -118,6 +132,10 @@ const adminOrderUpdateSchema = z.object({
 
 const resetPasswordSchema = z.object({
   password: passwordInput
+});
+
+const passwordResetTokenSchema = z.object({
+  token: z.string().trim().min(20).max(300)
 });
 
 const testEmailSchema = z.object({
@@ -385,7 +403,15 @@ function customerSessions(db: DbClient) {
   return (db as unknown as { customerSession: CustomerSessionDelegate }).customerSession;
 }
 
+function passwordResetTokens(db: DbClient) {
+  return (db as unknown as { passwordResetToken: PasswordResetTokenDelegate }).passwordResetToken;
+}
+
 function sessionTokenHash(token: string) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function passwordResetTokenHash(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
@@ -423,6 +449,35 @@ async function customerFromSession(req: Request) {
 
 async function revokeCustomerSessions(customerId: string) {
   await customerSessions(prisma).updateMany({ where: { customerId, revokedAt: null }, data: { revokedAt: new Date() } });
+}
+
+async function revokePasswordResetTokens(customerId: string, usedAt = new Date()) {
+  await passwordResetTokens(prisma).updateMany({ where: { customerId, usedAt: null }, data: { usedAt } });
+}
+
+async function createPasswordResetLink(req: Request, customerId: string) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  await passwordResetTokens(prisma).create({
+    data: {
+      customerId,
+      tokenHash: passwordResetTokenHash(token),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60_000)
+    }
+  });
+  return `${publicBaseUrl(req)}/reset-hesla/${encodeURIComponent(token)}`;
+}
+
+async function validPasswordResetToken(token: string) {
+  const resetToken = await passwordResetTokens(prisma).findUnique({
+    where: { tokenHash: passwordResetTokenHash(token) },
+    include: { customer: { select: { id: true, name: true } } }
+  });
+
+  if (!resetToken || resetToken.usedAt || resetToken.expiresAt.getTime() <= Date.now()) {
+    throw new HttpError(404, "Odkaz není platný nebo už vypršel.");
+  }
+
+  return resetToken;
 }
 
 async function getOrCreateCustomerForUser(db: DbClient, name: string, password: string) {
@@ -1465,8 +1520,87 @@ app.patch(
       select: { id: true, name: true, createdAt: true }
     });
     await revokeCustomerSessions(customer.id);
+    await revokePasswordResetTokens(customer.id);
 
     res.json({ customer });
+  })
+);
+
+app.post(
+  "/api/admin/customers/:customerId/password-reset-link",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { customerId } = z.object({ customerId: z.string().min(1) }).parse(req.params);
+    const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } });
+
+    if (!customer) {
+      throw new HttpError(404, "Zákazník nebyl nalezen.");
+    }
+
+    if (isAdminName(customer.name)) {
+      throw new HttpError(409, "Admin heslo se mění v env proměnné ADMIN_PASSWORD.");
+    }
+
+    res.json({ customer, resetUrl: await createPasswordResetLink(req, customer.id), expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString() });
+  })
+);
+
+app.get(
+  "/api/admin/password-reset-links",
+  adminAuth,
+  asyncRoute(async (_req, res) => {
+    const links = await passwordResetTokens(prisma).findMany({
+      where: { usedAt: null, expiresAt: { gt: new Date() } },
+      include: { customer: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "desc" }
+    });
+
+    res.json({
+      links: links.map((link) => ({
+        id: link.id,
+        customerId: link.customer.id,
+        customerName: link.customer.name,
+        createdAt: link.createdAt,
+        expiresAt: link.expiresAt
+      }))
+    });
+  })
+);
+
+app.delete(
+  "/api/admin/password-reset-links/:id",
+  adminAuth,
+  asyncRoute(async (req, res) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+    await passwordResetTokens(prisma).updateMany({ where: { id, usedAt: null }, data: { usedAt: new Date() } });
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  "/api/password-reset/:token",
+  asyncRoute(async (req, res) => {
+    const { token } = passwordResetTokenSchema.parse(req.params);
+    const resetToken = await validPasswordResetToken(token);
+    res.json({ customer: resetToken.customer, expiresAt: resetToken.expiresAt.toISOString() });
+  })
+);
+
+app.post(
+  "/api/password-reset/:token",
+  asyncRoute(async (req, res) => {
+    const { token } = passwordResetTokenSchema.parse(req.params);
+    const input = resetPasswordSchema.parse(req.body);
+    const resetToken = await validPasswordResetToken(token);
+    const usedAt = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.customer.update({ where: { id: resetToken.customerId }, data: { passwordHash: await bcrypt.hash(input.password, 12) } });
+      await passwordResetTokens(tx).updateMany({ where: { customerId: resetToken.customerId, usedAt: null }, data: { usedAt } });
+      await customerSessions(tx).updateMany({ where: { customerId: resetToken.customerId, revokedAt: null }, data: { revokedAt: usedAt } });
+    });
+
+    res.json({ ok: true });
   })
 );
 

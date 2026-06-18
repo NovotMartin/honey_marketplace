@@ -64,18 +64,6 @@
           <div v-if="testEmailResult" class="mt-3 rounded-2xl bg-emerald-100 p-3 text-sm font-bold text-emerald-900">{{ testEmailResult }}</div>
           <div v-if="testEmailError" class="mt-3 rounded-2xl bg-red-100 p-3 text-sm font-bold text-red-900">{{ testEmailError }}</div>
         </div>
-
-        <div class="admin-card">
-          <h3 class="admin-title">Reset hesel</h3>
-          <p class="mb-4 text-sm text-stone-600">Reset hesla zároveň odhlásí všechna aktivní přihlášení daného zákazníka.</p>
-          <div class="space-y-3">
-            <form v-for="customer in resettableCustomers" :key="customer.id" class="grid gap-2 sm:grid-cols-[1fr_1fr_auto]" @submit.prevent="resetCustomerPassword(customer.id)">
-              <span class="rounded-2xl bg-honey-50 px-3 py-3 font-bold text-stone-800 ring-1 ring-honey-100">{{ customer.name }}</span>
-              <input v-model="passwordResets[customer.id]" class="input text-stone-900" type="password" placeholder="Nové heslo" minlength="4" required />
-              <button class="btn-save" type="submit" :disabled="loading">Reset</button>
-            </form>
-          </div>
-        </div>
       </div>
 
       <div v-else class="mt-5 rounded-3xl bg-honey-50 p-5 font-bold text-stone-700 ring-1 ring-honey-100">Načítám administraci...</div>
@@ -85,10 +73,9 @@
 
 <script setup lang="ts">
 import { push } from "notivue";
-import { computed, onMounted, reactive, ref, watch } from "vue";
-import { adminResetPassword, adminSendTestEmail, saveAdminSettings, type AdminDashboard, type AdminSettings } from "../api";
+import { onMounted, reactive, ref, watch } from "vue";
+import { adminSendTestEmail, saveAdminSettings, type AdminDashboard, type AdminSettings } from "../api";
 import { useAutoRefresh } from "../composables/useAutoRefresh";
-import { confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
 import { useMarketStore } from "../stores/market";
 import { useSessionStore } from "../stores/session";
@@ -102,7 +89,6 @@ const loading = ref(false);
 const testEmailTo = ref("");
 const testEmailResult = ref("");
 const testEmailError = ref("");
-const passwordResets = reactive<Record<string, string>>({});
 const settingsForm = reactive<SettingsForm>({
   totalJars: 100,
   pricePerJarCzk: 200,
@@ -112,7 +98,6 @@ const settingsForm = reactive<SettingsForm>({
   revolutLink: "",
   paymentMessage: "Platba za med"
 });
-const resettableCustomers = computed(() => admin.dashboard?.customers.filter((customer) => customer.id !== session.profile?.customer.id) ?? []);
 
 function syncDashboard(dashboard: AdminDashboard | null) {
   if (!dashboard) {
@@ -126,10 +111,6 @@ function syncDashboard(dashboard: AdminDashboard | null) {
   settingsForm.revolutUsername = dashboard.settings.revolutUsername;
   settingsForm.revolutLink = dashboard.settings.revolutLink;
   settingsForm.paymentMessage = dashboard.settings.paymentMessage;
-
-  for (const customer of dashboard.customers) {
-    passwordResets[customer.id] ??= "";
-  }
 }
 
 async function submitSettings() {
@@ -166,31 +147,6 @@ async function submitTestEmail() {
     const message = error instanceof Error ? error.message : "Testovací e-mail se nepodařilo odeslat.";
     testEmailError.value = message;
     push.error(message);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function resetCustomerPassword(customerId: string) {
-  const customer = admin.dashboard?.customers.find((item) => item.id === customerId);
-  const confirmed = await confirmDanger({
-    title: "Resetovat heslo?",
-    text: `Zákazník ${customer?.name ?? ""} bude odhlášený ze všech zařízení a bude platit nové heslo.`,
-    confirmText: "Ano, resetovat"
-  });
-
-  if (!confirmed) {
-    return;
-  }
-
-  loading.value = true;
-
-  try {
-    await adminResetPassword(session.sessionToken, customerId, passwordResets[customerId]);
-    passwordResets[customerId] = "";
-    push.success("Heslo je změněné a aktivní přihlášení zákazníka byla odhlášena.");
-  } catch (error) {
-    push.error(error instanceof Error ? error.message : "Heslo se nepodařilo změnit.");
   } finally {
     loading.value = false;
   }

@@ -3,6 +3,8 @@ declare module "lucide-vue-next" {
 
   export const Check: Component;
   export const CreditCard: Component;
+  export const Eye: Component;
+  export const EyeOff: Component;
   export const Globe: Component;
   export const GlobeOff: Component;
   export const Pencil: Component;

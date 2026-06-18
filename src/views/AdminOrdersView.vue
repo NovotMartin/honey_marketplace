@@ -14,7 +14,7 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <input v-model="adminOrder.name" class="input text-stone-900" placeholder="Jméno" required />
           <input v-model.number="adminOrder.jarCount" class="input text-stone-900" type="number" min="1" required />
-          <input v-model="adminOrder.password" class="input text-stone-900 sm:col-span-2" placeholder="Volitelné heslo pro nový profil" />
+          <PasswordInput v-model="adminOrder.password" class="sm:col-span-2" input-class="text-stone-900" placeholder="Volitelné heslo pro nový profil" autocomplete="new-password" />
           <label class="flex items-center gap-2 text-sm font-bold text-stone-700 sm:col-span-2">
             <input v-model="adminOrder.confirmed" type="checkbox" /> Rovnou potvrdit
           </label>
@@ -205,6 +205,7 @@ import { push } from "notivue";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { adminCancelOrder, adminConfirmOrder, adminCreateOrder, adminCreatePaymentShare, adminDeleteOrder, adminUpdateOrder, type Order, type PublicState, type SharedPayment } from "../api";
 import DataTable, { type DataTableColumn } from "../components/DataTable.vue";
+import PasswordInput from "../components/PasswordInput.vue";
 import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { confirmAction, confirmDanger } from "../services/dialog";
 import { useAdminStore } from "../stores/admin";
