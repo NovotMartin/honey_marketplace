@@ -157,7 +157,7 @@ environment:
   ADMIN_CONFIRM_LINK_TTL_HOURS: ${ADMIN_CONFIRM_LINK_TTL_HOURS:-72}
 ```
 
-Prázdné `HONEY_*` hodnoty nepřepisují nastavení uložené přes admin UI. Pokud některou `HONEY_*` hodnotu vyplníš, při každém startu kontejneru se propíše do admin nastavení.
+`HONEY_*` hodnoty se použijí jen při prvním vytvoření nastavení v prázdné databázi. Jakmile už nastavení existuje, hodnoty z admin UI se při restartu ani redeployi nepřepisují.
 
 SQLite data jsou uložená ve volume `honey-data` na cestě `/app/data`.
 

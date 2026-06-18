@@ -268,25 +268,13 @@ app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 async function ensureSettings(db: DbClient) {
-  return db.settings.upsert({
-    where: { id: settingsId },
-    update: {},
-    create: { id: settingsId }
-  });
-}
+  const existing = await db.settings.findUnique({ where: { id: settingsId } });
 
-async function applySettingsOverridesFromEnv(db: PrismaClient) {
-  const overrides = settingsOverridesFromEnv();
-
-  if (Object.keys(overrides).length === 0) {
-    return;
+  if (existing) {
+    return existing;
   }
 
-  await db.settings.upsert({
-    where: { id: settingsId },
-    update: overrides,
-    create: { id: settingsId, ...overrides }
-  });
+  return db.settings.create({ data: { id: settingsId, ...settingsOverridesFromEnv() } });
 }
 
 async function activeJarCount(db: DbClient, excludeOrderId?: string) {
@@ -1496,7 +1484,6 @@ const port = Number(process.env.PORT ?? 3000);
 
 async function start() {
   await ensureSettings(prisma);
-  await applySettingsOverridesFromEnv(prisma);
 
   app.listen(port, () => {
     console.log(`Honey marketplace API běží na http://localhost:${port}`);
